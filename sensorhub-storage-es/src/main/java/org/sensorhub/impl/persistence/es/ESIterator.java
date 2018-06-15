@@ -102,7 +102,12 @@ public class ESIterator implements Iterator<SearchHit>{
 		// init current iterator
 		searchHitIterator = scrollResp.getHits().iterator();
 	}
-	
+
+	@Override
+	public void remove() {
+
+	}
+
 	/**
 	 * {@inheritDoc}
 	 */

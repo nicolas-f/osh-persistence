@@ -15,27 +15,21 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 package org.sensorhub.impl.persistence.es;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.support.AbstractClient;
-import org.elasticsearch.common.geo.builders.EnvelopeBuilder;
-import org.elasticsearch.common.geo.builders.PointBuilder;
-import org.elasticsearch.common.geo.builders.PolygonBuilder;
-import org.elasticsearch.common.geo.builders.ShapeBuilder;
-import org.elasticsearch.common.geo.builders.ShapeBuilders;
+import org.elasticsearch.common.geo.builders.*;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.join.query.JoinQueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.sort.SortOrder;
 import org.sensorhub.api.common.SensorHubException;
@@ -224,7 +218,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		if(useFoiFilter) {
 			// combine queries
-			filterQueryBuilder.must(QueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
+			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
 					.must(dataFilterQueryBuilder);
 		}	else {
 			filterQueryBuilder = dataFilterQueryBuilder;
@@ -249,18 +243,23 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public IDataRecord next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				
 				// build key
-				String recordType = nextSearchHit.getSource().get(RECORD_TYPE_FIELD_NAME).toString();
-				String foiID = nextSearchHit.getSource().get(FOI_UNIQUE_ID_FIELD).toString();
-				double timeStamp = (double) nextSearchHit.getSource().get(TIMESTAMP_FIELD_NAME);
+				String recordType = nextSearchHit.getSourceAsMap().get(RECORD_TYPE_FIELD_NAME).toString();
+				String foiID = nextSearchHit.getSourceAsMap().get(FOI_UNIQUE_ID_FIELD).toString();
+				double timeStamp = (double) nextSearchHit.getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
 				
 				final ObsKey key = new ObsKey(recordType, foiID, timeStamp);
 				
 				// get DataBlock from blob
-				final DataBlock datablock=ESObsStorageImpl.this.<DataBlock>getObject(nextSearchHit.getSource().get(BLOB_FIELD_NAME)); // DataBlock
+				final DataBlock datablock=ESObsStorageImpl.this.getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME)); // DataBlock
 				
 				return new IDataRecord(){
 
@@ -351,7 +350,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		if(useFoiFilter) {
 			// combine queries
-			filterQueryBuilder.must(QueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
+			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
 					.must(dataFilterQueryBuilder);
 		}	else {
 			filterQueryBuilder = dataFilterQueryBuilder;
@@ -378,10 +377,15 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public DataBlock next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				// get DataBlock from blob
-				Object blob = nextSearchHit.getSource().get(BLOB_FIELD_NAME);
+				Object blob = nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME);
 				return ESObsStorageImpl.this.<DataBlock>getObject(blob); // DataBlock
 			}
 		};
@@ -484,10 +488,15 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public String next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				// get Feature id
-				return nextSearchHit.getSource().get(FOI_UNIQUE_ID_FIELD).toString();
+				return nextSearchHit.getSourceAsMap().get(FOI_UNIQUE_ID_FIELD).toString();
 			}
 		};
 	}
@@ -537,10 +546,15 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public AbstractFeature next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				// get Feature from blob
-				return ESObsStorageImpl.this.<AbstractFeature>getObject(nextSearchHit.getSource().get(BLOB_FIELD_NAME));
+				return ESObsStorageImpl.this.<AbstractFeature>getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME));
 			}
 
 		};
@@ -850,20 +864,20 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
      * @returnthe Envelope builder
      */
     protected synchronized EnvelopeBuilder getEnvelopeBuilder(Bbox bbox) {
-        Coordinate topLeft = new Coordinate(bbox.getMinX(), bbox.getMaxY());
-        Coordinate btmRight = new Coordinate(bbox.getMaxX(), bbox.getMinY());
-        return ShapeBuilders.newEnvelope(topLeft, btmRight);
+		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(bbox.getMinX(), bbox.getMaxY());
+		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(bbox.getMaxX(), bbox.getMinY());
+        return new EnvelopeBuilder(topLeft, btmRight);
     }
 	
 	/**
 	 * Gets the envelope builder from envelope geometry.
-	 * @param envelope the envelope geometry 
+	 * @param env the envelope geometry
 	 * @returnthe Envelope builder
 	 */
 	protected synchronized EnvelopeBuilder getEnvelopeBuilder(Envelope env) {
-	    Coordinate topLeft = new Coordinate(env.getMinX(), env.getMaxY());
-        Coordinate btmRight = new Coordinate(env.getMaxX(), env.getMinY());
-        return ShapeBuilders.newEnvelope(topLeft, btmRight);
+		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(env.getMinX(), env.getMaxY());
+		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(env.getMaxX(), env.getMinY());
+        return new EnvelopeBuilder(topLeft, btmRight);
 	}
 
 	/**
@@ -873,9 +887,12 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	 */
 	protected synchronized PolygonBuilder getPolygonBuilder(Polygon polygon) {
 		// get coordinates list from polygon
-		List<Coordinate> coords = Arrays.asList(polygon.getCoordinates());
+		CoordinatesBuilder coordinates = new CoordinatesBuilder();
+		for(Coordinate coordinate : polygon.getExteriorRing().getCoordinates()) {
+			coordinates.coordinate(new org.locationtech.jts.geom.Coordinate(coordinate.x, coordinate.y, coordinate.z));
+		}
 		// build shape builder from coordinates
-		return ShapeBuilders.newPolygon(coords);
+		return new PolygonBuilder(coordinates);
 		//.relation(ShapeRelation.WITHIN); strategy, Default is INTERSECT
 	}
 	
@@ -886,7 +903,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	 */
 	protected synchronized PointBuilder getPointBuilder(Point point) {
 		// build shape builder from coordinates
-		return ShapeBuilders.newPoint(point.getCoordinate());
+		return new PointBuilder(point.getX(), point.getY());
 	}
 	
 	/**
@@ -915,6 +932,6 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	 */
 	protected synchronized QueryBuilder getPolygonGeoQuery(Polygon polygon) throws IOException {
 		return QueryBuilders.geoIntersectionQuery(SHAPE_FIELD_NAME, 
-				ShapeBuilders.newPolygon(Arrays.asList(polygon.getCoordinates())));
+				getPolygonBuilder(polygon));
 	}
 }

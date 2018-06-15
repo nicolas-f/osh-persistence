@@ -24,7 +24,7 @@ import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.transport.client.PreBuiltTransportClient;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -83,7 +83,7 @@ public class TestEsObsStorage extends AbstractTestObsStorage<ESObsStorageImpl>
 		        .put("cluster.name", CLUSTER_NAME).build();
 		
 		TransportClient client = new PreBuiltTransportClient(settings);
-		client.addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName("localhost"), 9300));
+		client.addTransportAddress(new TransportAddress(InetAddress.getByName("localhost"), 9300));
 					
 		String idxName = "junit_*";
 

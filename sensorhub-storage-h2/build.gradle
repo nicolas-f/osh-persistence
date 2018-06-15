@@ -18,6 +18,11 @@ jar {
   }
 }
 
+//project.configurations.compile.resolvedConfiguration.resolvedArtifacts.each {
+// println it.name // << the artifact name
+// println it.file // << the file reference
+//}
+
 // add info to maven pom
 ext.pom >>= {
   developers {

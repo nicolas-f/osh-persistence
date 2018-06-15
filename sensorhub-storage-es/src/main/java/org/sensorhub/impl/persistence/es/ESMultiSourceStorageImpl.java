@@ -63,7 +63,7 @@ public class ESMultiSourceStorageImpl extends ESObsStorageImpl implements IMulti
 		Set<String> uniqueList = new HashSet<>();
 		while(searchHitsIterator.hasNext()) {
 			SearchHit hit = searchHitsIterator.next();
-			uniqueList.add(hit.getSource().get(PRODUCER_ID_FIELD_NAME).toString());
+			uniqueList.add(hit.getSourceAsMap().get(PRODUCER_ID_FIELD_NAME).toString());
 		}
 		return uniqueList;
 	}

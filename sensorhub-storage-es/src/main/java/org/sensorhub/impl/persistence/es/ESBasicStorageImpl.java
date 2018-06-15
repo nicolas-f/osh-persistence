@@ -43,8 +43,8 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
@@ -172,6 +172,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public synchronized void start() throws SensorHubException {
 		if(client == null) {
+			// Check class
+			if(!NetworkService.NETWORK_SERVER.getKey().equals("network.server")) {
+				throw new SensorHubException("Elastic search dependency error");
+			}
 			// init transport client
 			Settings settings = Settings.builder()
 			        .put("cluster.name", config.clusterName)
@@ -194,10 +198,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 						url = new URL("http://"+nodeUrl);
 					}
 					
-					transportAddresses[i++]=new InetSocketTransportAddress(
-							InetAddress.getByName(url.getHost()), // host
-							url.getPort()); //port
-					
+					transportAddresses[i++] = new TransportAddress(InetAddress.getByName(url.getHost()), url.getPort());
+
 				} catch (MalformedURLException e) {
 					log.error("Cannot initialize transport address:"+e.getMessage());
 					throw new SensorHubException("Cannot initialize transport address",e);
@@ -299,7 +301,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		// sorted desc by their timestamp
 		if(response.getHits().getTotalHits() > 0){
 			// get the first one of the list means the most recent
-			Object blob = response.getHits().getAt(0).getSource().get(BLOB_FIELD_NAME);
+			Object blob = response.getHits().getAt(0).getSourceAsMap().get(BLOB_FIELD_NAME);
 			result = this.<AbstractProcess>getObject(blob);
 		}
 		return result;
@@ -324,7 +326,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		while(iterator.hasNext()) {
 			SearchHit hit = iterator.next();
 			// deSerialize the AbstractProcess stored object 
-			Object blob = hit.getSource().get(BLOB_FIELD_NAME);
+			Object blob = hit.getSourceAsMap().get(BLOB_FIELD_NAME);
 			results.add(this.<AbstractProcess>getObject(blob));
 		}
 		return results;
@@ -348,7 +350,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 		if(iterator.hasNext()) {
 			// get the blob from the source response field
-			Object blob = iterator.next().getSource().get(BLOB_FIELD_NAME);
+			Object blob = iterator.next().getSourceAsMap().get(BLOB_FIELD_NAME);
 			
 			// deserialize the object
 			result = this.getObject(blob);
@@ -444,7 +446,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		DataStreamInfo rsInfo = null;
 		for(SearchHit hit : response.getHits()) {
 			name = hit.getId(); // name
-			rsInfo = this.<DataStreamInfo>getObject(hit.getSource().get(BLOB_FIELD_NAME)); // DataStreamInfo
+			rsInfo = this.<DataStreamInfo>getObject(hit.getSourceAsMap().get(BLOB_FIELD_NAME)); // DataStreamInfo
 			result.put(name,rsInfo);
 		}
 		return result;
@@ -493,7 +495,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		        .get();
 		
 		if(response.getHits().getTotalHits()> 0) {
-			result[0] = (double) response.getHits().getAt(0).getSource().get(TIMESTAMP_FIELD_NAME);
+			result[0] = (double) response.getHits().getAt(0).getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
 		}
 		
 		// build request to get the most recent record
@@ -505,7 +507,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		        .get();
 		
 		if(response.getHits().getTotalHits()> 0) {
-			result[1] = (double) response.getHits().getAt(0).getSource().get(TIMESTAMP_FIELD_NAME);
+			result[1] = (double) response.getHits().getAt(0).getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
 		}
 		
 		return result;
@@ -536,6 +538,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public double[] next() {
 				double[] clusterTimeRange = new double[2];
                 clusterTimeRange[0] = lastTime;
@@ -546,7 +553,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 
 				while (searchHitsIterator.hasNext()) {
 					nextSearchHit = searchHitsIterator.next();
-					recTime = (double) nextSearchHit.getSource().get(TIMESTAMP_FIELD_NAME);
+					recTime = (double) nextSearchHit.getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
 
 					synchronized (this) {
 						if (Double.isNaN(lastTime)) {
@@ -625,10 +632,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public DataBlock next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				// get DataBlock from blob
-				Object blob = nextSearchHit.getSource().get(BLOB_FIELD_NAME);
+				Object blob = nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME);
 				return ESBasicStorageImpl.this.<DataBlock>getObject(blob); // DataBlock
 			}
 		};
@@ -674,14 +686,19 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 			}
 
 			@Override
+			public void remove() {
+
+			}
+
+			@Override
 			public IDataRecord next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
 				
 				// build key
 				final DataKey key = getDataKey(nextSearchHit.getId());
-				key.timeStamp = (double) nextSearchHit.getSource().get(TIMESTAMP_FIELD_NAME);
+				key.timeStamp = (double) nextSearchHit.getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
 				// get DataBlock from blob
-				final DataBlock datablock=ESBasicStorageImpl.this.<DataBlock>getObject(nextSearchHit.getSource().get(BLOB_FIELD_NAME)); // DataBlock
+				final DataBlock datablock=ESBasicStorageImpl.this.<DataBlock>getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME)); // DataBlock
 				return new IDataRecord(){
 
 					@Override
@@ -860,7 +877,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	
 	/**
 	 * Transform the recordStorage data key into a DataKey by splitting <recordtype><SEPARATOR><timestamp><SEPARATOR><producerID>.
-	 * @param dataKey the corresponding dataKey
+	 * @param rsKey the corresponding dataKey
 	 * @return the dataKey. NULL if the length != 3 after splitting
 	 */
 	protected DataKey getDataKey(String rsKey) {
