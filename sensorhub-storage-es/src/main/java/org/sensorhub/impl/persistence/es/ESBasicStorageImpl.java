@@ -43,7 +43,6 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.ByteSizeUnit;
@@ -172,10 +171,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public synchronized void start() throws SensorHubException {
 		if(client == null) {
-			// Check class
-			if(!NetworkService.NETWORK_SERVER.getKey().equals("network.server")) {
-				throw new SensorHubException("Elastic search dependency error");
-			}
 			// init transport client
 			Settings settings = Settings.builder()
 			        .put("cluster.name", config.clusterName)

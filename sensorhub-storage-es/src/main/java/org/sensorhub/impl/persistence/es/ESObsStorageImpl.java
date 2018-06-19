@@ -98,7 +98,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	    
 	    // preload bbox
 	    if (client != null) {
-	        GetResponse response = client.prepareGet(indexName, GEOBOUNDS_IDX_NAME, GEOBOUNDS_IDX_NAME).get();
+	        GetResponse response = client.prepareGet(indexName, "_doc", GEOBOUNDS_IDX_NAME).get();
 	        foiExtent = getObject(response.getSource().get(BLOB_FIELD_NAME));	        
 	    }
 	}
@@ -111,7 +111,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		try {
 			client.admin().indices() 
 			    .preparePutMapping(indexName) 
-			    .setType(FOI_IDX_NAME)
+			    .setType("_doc")
 			    .setSource(getFoiMapping()) 
 			    .execute().actionGet();
 		} catch (IOException e) {
@@ -123,14 +123,13 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		// the geobounds aggregation doesn't work with geo_shape yet
         try {
             client.admin().indices() 
-                .preparePutMapping(indexName) 
-                .setType(GEOBOUNDS_IDX_NAME)
+                .preparePutMapping(indexName)
                 .setSource(getFoiBoundsMapping())
                 .execute().actionGet();
             
             // index an empty bbox
             foiExtent = new Bbox();
-            client.prepareIndex(indexName, GEOBOUNDS_IDX_NAME)
+            client.prepareIndex(indexName, "_doc")
                 .setId(GEOBOUNDS_IDX_NAME)
                 .setSource(BLOB_FIELD_NAME, this.getBlob(foiExtent))
                 .get();
@@ -218,7 +217,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		if(useFoiFilter) {
 			// combine queries
-			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
+			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery("_doc", foiFilterQueryBuilder, false))
 					.must(dataFilterQueryBuilder);
 		}	else {
 			filterQueryBuilder = dataFilterQueryBuilder;
@@ -226,7 +225,6 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		// build response
 		SearchRequestBuilder scrollReq = client.prepareSearch(indexName)
-				.setTypes(RS_DATA_IDX_NAME)
 				.addSort(TIMESTAMP_FIELD_NAME, SortOrder.ASC)
 		        .setScroll(new TimeValue(config.scrollMaxDuration))
 		        .setQuery(filterQueryBuilder);
@@ -350,7 +348,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		if(useFoiFilter) {
 			// combine queries
-			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery(FOI_IDX_NAME, foiFilterQueryBuilder, false))
+			filterQueryBuilder.must(JoinQueryBuilders.hasParentQuery("_doc", foiFilterQueryBuilder, false))
 					.must(dataFilterQueryBuilder);
 		}	else {
 			filterQueryBuilder = dataFilterQueryBuilder;
@@ -419,7 +417,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 		// build the request
 		final SearchRequestBuilder scrollReq = client.prepareSearch(indexName)
-				.setTypes(FOI_IDX_NAME)
+				.setTypes("_doc")
 				.setQuery(filterQueryBuilder)
 				.setFetchSource(new String[] {}, new String[] {"*"}); 
 
@@ -472,7 +470,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		}
 		
 		final SearchRequestBuilder scrollReq = client.prepareSearch(indexName)
-				.setTypes(FOI_IDX_NAME)
+				.setTypes("_doc")
 				.setQuery(filterQueryBuilder)
 				 // get only the id
 				.setFetchSource(new String[] { FOI_UNIQUE_ID_FIELD }, new String[] {}) 
@@ -529,7 +527,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		
 		// create scroll request
 		final SearchRequestBuilder scrollReq = client.prepareSearch(indexName)
-				.setTypes(FOI_IDX_NAME)
+				.setTypes("_doc")
 				.setQuery(filterQueryBuilder)
 				 // get only the blob
 				.setFetchSource(new String[] { BLOB_FIELD_NAME }, new String[] {}) 
@@ -579,7 +577,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		String esKey = getRsKey(key);
 		
 		// build the request
-		GetResponse  response = client.prepareGet(indexName,RS_DATA_IDX_NAME,esKey)
+		GetResponse  response = client.prepareGet(indexName,"_doc",esKey)
 				.setParent(parent)
 				.get();
 		
@@ -688,7 +686,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			json.put(BLOB_FIELD_NAME,blob); // store DataBlock
 			
 			// set id and blob before executing the request
-			String id = client.prepareIndex(indexName,RS_DATA_IDX_NAME)
+			String id = client.prepareIndex(indexName,"_doc")
 					.setId(esKey)
                     .setParent(NO_PARENT_VALUE)
 					.setSource(json)
@@ -730,7 +728,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			
 			
 			// set id and blob before executing the request
-			String id = client.prepareIndex(indexName,RS_DATA_IDX_NAME)
+			String id = client.prepareIndex(indexName,"_doc")
 			        .setId(esKey)
 					.setParent(uniqueParentID)
 					.setSource(json).get().getId();
@@ -740,7 +738,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	@Override
 	public synchronized void storeFoi(String producerID, AbstractFeature foi) {
 		// build the foi index requQueryBuilders.termsQuery("producerId", producerIds)QueryBuilders.termsQuery("producerId", producerIds)est
-		IndexRequestBuilder foiIdxReq = client.prepareIndex(indexName, FOI_IDX_NAME);
+		IndexRequestBuilder foiIdxReq = client.prepareIndex(indexName, "_doc");
 
 		AbstractGeometry geometry = foi.getLocation();
 
@@ -759,7 +757,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 				
 				// also update bounds
 				foiExtent.add(GMLUtils.envelopeToBbox(geometry.getGeomEnvelope()));
-				UpdateRequestBuilder boundsIdxReq = client.prepareUpdate(indexName, GEOBOUNDS_IDX_NAME, GEOBOUNDS_IDX_NAME);
+				UpdateRequestBuilder boundsIdxReq = client.prepareUpdate(indexName, "_doc", GEOBOUNDS_IDX_NAME);
 				boundsIdxReq.setDoc(BLOB_FIELD_NAME, this.getBlob(foiExtent)).get();
 				
 			} catch (SensorHubException e) {

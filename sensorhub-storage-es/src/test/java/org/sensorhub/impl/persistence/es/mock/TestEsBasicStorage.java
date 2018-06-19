@@ -15,13 +15,18 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 package org.sensorhub.impl.persistence.es.mock;
 
 import java.io.File;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.elasticsearch.client.support.AbstractClient;
+import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeValidationException;
+import org.elasticsearch.transport.client.PreBuiltTransportClient;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
@@ -33,15 +38,14 @@ import org.sensorhub.utils.FileUtils;
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
 
     protected static final String CLUSTER_NAME = "elasticsearch";
-    
-    private static Node node;
+	private static TransportClient client;
 	private static File tmpDir;
 	
 	static {
 		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
 		tmpDir.mkdirs();
 		try {
-			node = getNode(tmpDir);
+			client = getTransportClient();
 		} catch (NodeValidationException e) {
 			e.printStackTrace();
 		}
@@ -60,9 +64,9 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		config.nodeUrls = nodes;
 		config.scrollFetchSize = 2000;
 		config.bulkConcurrentRequests = 0;
-		config.id = "junit_" + UUID.randomUUID().toString();
+		config.id = "junit_testesbasicstorage_" + UUID.randomUUID().toString();
 		
-		storage = new ESBasicStorageImpl((AbstractClient) node.client());
+		storage = new ESBasicStorageImpl(client);
 		storage.init(config);
 		storage.start();
 	}
@@ -75,31 +79,23 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		
 	}
 
-	public static Node getNode(File outputDir) throws NodeValidationException {
-		Settings settings = Settings.builder()
-	            .put("path.home", tmpDir.getAbsolutePath())
-	            .put("transport.type", "local")
-	            .put("http.enabled", false)
-	            .put("processors",Runtime.getRuntime().availableProcessors())
-	            .put("node.max_local_storage_nodes", 15)
-                .put("thread_pool.bulk.size", Runtime.getRuntime().availableProcessors())
-                // default is 50 which is too low
-                .put("thread_pool.bulk.queue_size", 16 * Runtime.getRuntime().availableProcessors())
-	            .build();
 
-	    return new Node(settings).start();
+	public static TransportClient getTransportClient() throws NodeValidationException {
+		try {
+			return new PreBuiltTransportClient(Settings.EMPTY)
+					.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
+		} catch (UnknownHostException ex) {
+			throw new NodeValidationException(ex.getLocalizedMessage());
+		}
 	}
-	
+
 	@AfterClass
     public static void cleanup() throws Exception {
-		if(node != null) {
-			if(node.client() != null) {
-				node.client().close();
-			}
-			node.close();
-			node = null;
+		if(client != null) {
+			client.close();
+			client = null;
 		}
-		
+
 		if(tmpDir.exists()) {
 			FileUtils.deleteRecursively(tmpDir);
 		}
