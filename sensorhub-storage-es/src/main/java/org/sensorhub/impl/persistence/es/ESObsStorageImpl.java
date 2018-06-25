@@ -77,7 +77,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	protected static final String GEOBOUNDS_IDX_NAME = "geobounds";
 	protected static final String FOI_UNIQUE_ID_FIELD = "foiID";
 	protected static final String SHAPE_FIELD_NAME = "geom";
-	protected Bbox foiExtent = null;
+	protected Bbox foiExtent = new Bbox();
 	
 	/**
 	 * Class logger
@@ -99,7 +99,9 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	    // preload bbox
 	    if (client != null) {
 	        GetResponse response = client.prepareGet(indexName, "_doc", GEOBOUNDS_IDX_NAME).get();
-	        foiExtent = getObject(response.getSource().get(BLOB_FIELD_NAME));	        
+	        if(response != null && response.getSource() != null && response.getSource().containsKey(BLOB_FIELD_NAME)) {
+				foiExtent = getObject(response.getSource().get(BLOB_FIELD_NAME));
+			}
 	    }
 	}
 	
