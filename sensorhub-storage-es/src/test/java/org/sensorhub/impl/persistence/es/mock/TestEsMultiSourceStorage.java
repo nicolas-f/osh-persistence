@@ -14,87 +14,67 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
-import java.io.File;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+public class TestEsMultiSourceStorage {
 
-import org.elasticsearch.client.support.AbstractClient;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.TransportAddress;
-import org.elasticsearch.node.Node;
-import org.elasticsearch.node.NodeValidationException;
-import org.elasticsearch.transport.client.PreBuiltTransportClient;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
-import org.sensorhub.impl.persistence.es.ESMultiSourceStorageImpl;
-import org.sensorhub.test.persistence.AbstractTestBasicStorage;
-import org.sensorhub.utils.FileUtils;
-
-public class TestEsMultiSourceStorage extends AbstractTestBasicStorage<ESMultiSourceStorageImpl> {
-
-    protected static final String CLUSTER_NAME = "elasticsearch";
-    private static TransportClient client;
-	private static File tmpDir;
-	
-	static {
-		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
-		tmpDir.mkdirs();
-		try {
-			client = getTransportClient();
-		} catch (NodeValidationException e) {
-			e.printStackTrace();
-		}
-	}
-	
-	@Before
-	public void init() throws Exception {
-		
-		
-		ESBasicStorageConfig config = new ESBasicStorageConfig();
-		config.autoStart = true;
-		config.clusterName = CLUSTER_NAME;
-		config.scrollFetchSize = 2000;
-		config.bulkConcurrentRequests = 0;
-		config.id = "junit_" + UUID.randomUUID().toString();
-		
-		storage = new ESMultiSourceStorageImpl(client);
-		storage.init(config);
-		storage.start();
-	}
-
-	@Override
-	protected void forceReadBackFromStorage() throws Exception {
-		// Let the time to ES to write the data
-    	// if some tests are not passed,  try to increase this value first!!
-		storage.commit();
-		
-	}
-
-	public static TransportClient getTransportClient() throws NodeValidationException {
-		try {
-			return new PreBuiltTransportClient(Settings.EMPTY)
-					.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
-		} catch (UnknownHostException ex) {
-			throw new NodeValidationException(ex.getLocalizedMessage());
-		}
-	}
-	
-	@AfterClass
-    public static void cleanup() throws Exception {
-		if(client != null) {
-			client.close();
-			client = null;
-		}
-		
-		if(tmpDir.exists()) {
-			FileUtils.deleteRecursively(tmpDir);
-		}
-	}
+// extends AbstractTestBasicStorage<ESMultiSourceStorageImpl> {
+//
+//    protected static final String CLUSTER_NAME = "elasticsearch";
+//    private static TransportClient client;
+//	private static File tmpDir;
+//
+//	static {
+//		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
+//		tmpDir.mkdirs();
+//		try {
+//			client = getTransportClient();
+//		} catch (NodeValidationException e) {
+//			e.printStackTrace();
+//		}
+//	}
+//
+//	@Before
+//	public void init() throws Exception {
+//
+//
+//		ESBasicStorageConfig config = new ESBasicStorageConfig();
+//		config.autoStart = true;
+//		config.clusterName = CLUSTER_NAME;
+//		config.scrollFetchSize = 2000;
+//		config.bulkConcurrentRequests = 0;
+//		config.id = "junit_" + UUID.randomUUID().toString();
+//
+//		storage = new ESMultiSourceStorageImpl(client);
+//		storage.init(config);
+//		storage.start();
+//	}
+//
+//	@Override
+//	protected void forceReadBackFromStorage() throws Exception {
+//		// Let the time to ES to write the data
+//    	// if some tests are not passed,  try to increase this value first!!
+//		storage.commit();
+//
+//	}
+//
+//	public static TransportClient getTransportClient() throws NodeValidationException {
+//		try {
+//			return new PreBuiltTransportClient(Settings.EMPTY)
+//					.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
+//		} catch (UnknownHostException ex) {
+//			throw new NodeValidationException(ex.getLocalizedMessage());
+//		}
+//	}
+//
+//	@AfterClass
+//    public static void cleanup() throws Exception {
+//		if(client != null) {
+//			client.close();
+//			client = null;
+//		}
+//
+//		if(tmpDir.exists()) {
+//			FileUtils.deleteRecursively(tmpDir);
+//		}
+//	}
 }
 	

@@ -14,17 +14,10 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.integration;
 
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
-import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.TransportAddress;
-import org.elasticsearch.transport.client.PreBuiltTransportClient;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -37,14 +30,15 @@ import org.sensorhub.test.persistence.AbstractTestBasicStorage;
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
 
 	protected static final String CLUSTER_NAME = "elasticsearch";
-	
+
 	@Before
 	public void init() throws Exception {
 		ESBasicStorageConfig config = new ESBasicStorageConfig();
 		config.autoStart = true;
 		config.clusterName = CLUSTER_NAME;
 		List<String> nodes = new ArrayList<String>();
-		nodes.add("localhost:9300");
+		nodes.add("localhost:9200");
+		nodes.add("localhost:9201");
 
 		config.nodeUrls = nodes;
 		config.scrollFetchSize = 200;
@@ -69,20 +63,20 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 
 	@AfterClass
 	public static void cleanup() throws UnknownHostException {
-		// add transport address(es)
-		Settings settings = Settings.builder()
-		        .put("cluster.name", CLUSTER_NAME).build();
-		
-		TransportClient client = new PreBuiltTransportClient(settings);
-		client.addTransportAddress(new TransportAddress(InetAddress.getByName("localhost"), 9300));
-					
-		String idxName = "junit_*";
-
-		DeleteIndexResponse delete = client.admin().indices().delete(new DeleteIndexRequest(idxName)).actionGet();
-		if (!delete.isAcknowledged()) {
-			System.err.println("Index wasn't deleted");
-		}
-		
-		client.close();
+//		// add transport address(es)
+//		Settings settings = Settings.builder()
+//		        .put("cluster.name", CLUSTER_NAME).build();
+//
+//		TransportClient client = new PreBuiltTransportClient(settings);
+//		client.addTransportAddress(new TransportAddress(InetAddress.getByName("localhost"), 9300));
+//
+//		String idxName = "junit_*";
+//
+//		DeleteIndexResponse delete = client.admin().indices().delete(new DeleteIndexRequest(idxName)).actionGet();
+//		if (!delete.isAcknowledged()) {
+//			System.err.println("Index wasn't deleted");
+//		}
+//
+//		client.close();
 	}
 }

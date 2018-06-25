@@ -15,20 +15,16 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 package org.sensorhub.impl.persistence.es.mock;
 
 import java.io.File;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import org.elasticsearch.client.support.AbstractClient;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.TransportAddress;
-import org.elasticsearch.node.Node;
-import org.elasticsearch.node.NodeValidationException;
-import org.elasticsearch.transport.client.PreBuiltTransportClient;
+
+import org.apache.http.HttpHost;
+import org.elasticsearch.client.RestClient;
+import org.elasticsearch.client.RestHighLevelClient;
 import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
 import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
 import org.sensorhub.test.persistence.AbstractTestBasicStorage;
@@ -38,17 +34,17 @@ import org.sensorhub.utils.FileUtils;
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
 
     protected static final String CLUSTER_NAME = "elasticsearch";
-	private static TransportClient client;
+	private static RestHighLevelClient client;
 	private static File tmpDir;
-	
-	static {
+
+	@BeforeClass
+	public static void initClass() {
 		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
 		tmpDir.mkdirs();
-		try {
-			client = getTransportClient();
-		} catch (NodeValidationException e) {
-			e.printStackTrace();
-		}
+		client = new RestHighLevelClient(
+				RestClient.builder(
+						new HttpHost("localhost", 9200, "http"),
+						new HttpHost("localhost", 9201, "http")));
 	}
 	
 	@Before
@@ -77,16 +73,6 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
     	// if some tests are not passed,  try to increase this value first!!
 		storage.commit();
 		
-	}
-
-
-	public static TransportClient getTransportClient() throws NodeValidationException {
-		try {
-			return new PreBuiltTransportClient(Settings.EMPTY)
-					.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
-		} catch (UnknownHostException ex) {
-			throw new NodeValidationException(ex.getLocalizedMessage());
-		}
 	}
 
 	@AfterClass

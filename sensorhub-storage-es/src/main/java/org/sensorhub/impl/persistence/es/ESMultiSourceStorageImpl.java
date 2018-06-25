@@ -17,6 +17,7 @@ package org.sensorhub.impl.persistence.es;
 import java.util.*;
 
 import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -43,7 +44,7 @@ public class ESMultiSourceStorageImpl extends ESObsStorageImpl implements IMulti
         // default constructor
     }
     
-    public ESMultiSourceStorageImpl(AbstractClient client) {
+    public ESMultiSourceStorageImpl(RestHighLevelClient client) {
 		super(client);
 	}	 
 	
