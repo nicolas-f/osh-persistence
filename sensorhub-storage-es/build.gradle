@@ -4,13 +4,8 @@ version = '1.0.0-SNAPSHOT'
 
 dependencies {
   compile 'org.sensorhub:sensorhub-core:' + oshCoreVersion
-  compile group: 'org.elasticsearch.client', name: 'transport', version: '6.3.0'
-  compile 'com.esotericsoftware:kryo:4.0.0'
-  compile group: 'org.locationtech.spatial4j', name: 'spatial4j', version: '0.7'
-  compile group: 'org.locationtech.jts', name: 'jts-core', version: '1.15.0'
-  
-  testCompile 'org.apache.logging.log4j:log4j-api:2.7'
-  testCompile 'org.apache.logging.log4j:log4j-core:2.7'
+  compile 'org.elasticsearch.client:elasticsearch-rest-high-level-client:6.3.0'
+
   testCompile group:'org.sensorhub', name:'sensorhub-core', version:oshCoreVersion, configuration: 'testArtifacts'
 }
 

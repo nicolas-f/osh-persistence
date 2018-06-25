@@ -14,10 +14,8 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Set;
+import java.util.*;
+
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.common.unit.TimeValue;
@@ -51,21 +49,22 @@ public class ESMultiSourceStorageImpl extends ESObsStorageImpl implements IMulti
 	
 	@Override
 	public Collection<String> getProducerIDs() {
-		final SearchRequestBuilder scrollReq = client.prepareSearch(indexName)
-				.setTypes(RS_DATA_IDX_NAME)
-				.setQuery(QueryBuilders.existsQuery(PRODUCER_ID_FIELD_NAME))
-		        .setScroll(new TimeValue(config.scrollMaxDuration));
-
-		// wrap the request into custom ES Scroll iterator
-		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, scrollReq,
-				config.scrollFetchSize); //max of scrollFetchSize hits will be returned for each scroll
-		
-		Set<String> uniqueList = new HashSet<>();
-		while(searchHitsIterator.hasNext()) {
-			SearchHit hit = searchHitsIterator.next();
-			uniqueList.add(hit.getSourceAsMap().get(PRODUCER_ID_FIELD_NAME).toString());
-		}
-		return uniqueList;
+    	return new ArrayList<>();
+//		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend)
+//				.setTypes(RS_DATA_IDX_NAME)
+//				.setQuery(QueryBuilders.existsQuery(PRODUCER_ID_FIELD_NAME))
+//		        .setScroll(new TimeValue(config.scrollMaxDuration));
+//
+//		// wrap the request into custom ES Scroll iterator
+//		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, scrollReq,
+//				config.scrollFetchSize); //max of scrollFetchSize hits will be returned for each scroll
+//
+//		Set<String> uniqueList = new HashSet<>();
+//		while(searchHitsIterator.hasNext()) {
+//			SearchHit hit = searchHitsIterator.next();
+//			uniqueList.add(hit.getSourceAsMap().get(PRODUCER_ID_FIELD_NAME).toString());
+//		}
+//		return uniqueList;
 	}
 
 	@Override

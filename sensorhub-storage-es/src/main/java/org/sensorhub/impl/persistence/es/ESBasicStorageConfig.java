@@ -26,6 +26,7 @@ import org.sensorhub.api.config.DisplayInfo.Required;
  * </p>
  *
  * @author Mathieu Dhainaut <mathieu.dhainaut@gmail.com>
+ * @author Nicolas Fortin <nicolas.fortin at - ifsttar.fr>
  * @since 2017
  */
 public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStorageConfig {
@@ -37,10 +38,9 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @Required
     @DisplayInfo(desc="List of nodes")
     public List<String> nodeUrls = new ArrayList<>();
-    
-    @Required
-    @DisplayInfo(desc="Main index name (if null, the localID of the module is used)")
-    public String indexName;
+
+    @DisplayInfo(desc="String to add in index name before the data name")
+    public String indexNamePrepend = "";
             
     @DisplayInfo(desc="When scrolling, the maximum duration ScrollableResults will be usable if no other results are fetched from, in ms")
     public int scrollMaxDuration = 6000;
@@ -78,7 +78,7 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @Override
     public void setStorageIdentifier(String name)
     {
-        indexName = name;        
+        indexNamePrepend = name;
     }
 	
 }
