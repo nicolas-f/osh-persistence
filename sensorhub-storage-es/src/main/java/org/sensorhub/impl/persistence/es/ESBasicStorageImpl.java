@@ -329,9 +329,29 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public List<AbstractProcess> getDataSourceDescriptionHistory(double startTime, double endTime) {
-        log.info("ESBasicStorageImpl:getDataSourceDescriptionHistory");
-	    return null;
-//		List<AbstractProcess> results = new ArrayList<>();
+        List<AbstractProcess> results = new ArrayList<>();
+
+        SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        QueryBuilder query = QueryBuilders.boolQuery()
+                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME))
+                .must(new RangeQueryBuilder(TIMESTAMP_FIELD_NAME).from(Double.valueOf(startTime * 1000).longValue()).to(Double.valueOf(endTime * 1000).longValue()));
+        searchSourceBuilder.query(query);
+        searchSourceBuilder.sort(new FieldSortBuilder(TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
+        searchSourceBuilder.size(Integer.MAX_VALUE);
+        searchRequest.source(searchSourceBuilder);
+
+        try {
+            SearchResponse response = client.search(searchRequest);
+            for(SearchHit searchHit : response.getHits()) {
+                results.add(this.getObject(searchHit.getSourceAsMap().get(BLOB_FIELD_NAME)));
+            }
+        } catch (IOException | ElasticsearchStatusException ex) {
+            log.error("getRecordStores failed", ex);
+        }
+
+        return results;
 //
 //		// query ES to get the corresponding timestamp
 //		// the response is applied a post filter allowing to specify a range request on the timestamp
@@ -356,32 +376,30 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public AbstractProcess getDataSourceDescriptionAtTime(double time) {
-        log.info("ESBasicStorageImpl:getDataSourceDescriptionAtTime");
-	    return null;
 
-//
-//		// query ES to get the corresponding timestamp
-//		// the response is applied a post filter allowing to specify a range request on the timestamp
-//		// the hits should be directly filtered
-//		SearchRequestBuilder request = client.prepareSearch(indexNamePrepend).setTypes(DESC_HISTORY_IDX_NAME)
-//				.setScroll(new TimeValue(config.scrollMaxDuration))
-//				.addSort(TIMESTAMP_FIELD_NAME,SortOrder.DESC)
-//				.setPostFilter(QueryBuilders.rangeQuery(TIMESTAMP_FIELD_NAME)
-//						.from(0).to(time))     // Query
-//		        ;
-//
-//		Iterator<SearchHit> iterator = new ESIterator(client, request,config.scrollFetchSize);
-//
-//		AbstractProcess result = null;
-//
-//		if(iterator.hasNext()) {
-//			// get the blob from the source response field
-//			Object blob = iterator.next().getSourceAsMap().get(BLOB_FIELD_NAME);
-//
-//			// deserialize the object
-//			result = this.getObject(blob);
-//		}
-//		return result;
+
+        AbstractProcess result = null;
+        SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        QueryBuilder query = QueryBuilders.boolQuery()
+                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME))
+                .must(new RangeQueryBuilder(TIMESTAMP_FIELD_NAME).from(0).to(Double.valueOf(time * 1000).longValue()));
+        searchSourceBuilder.query(query);
+        searchSourceBuilder.sort(new FieldSortBuilder(TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
+        searchSourceBuilder.size(1);
+        searchRequest.source(searchSourceBuilder);
+
+        try {
+            SearchResponse response = client.search(searchRequest);
+            if(response.getHits().getTotalHits() > 0) {
+                result = this.getObject(response.getHits().getAt(0).getSourceAsMap().get(BLOB_FIELD_NAME));
+            }
+        } catch (IOException | ElasticsearchStatusException ex) {
+            log.error("getRecordStores failed", ex);
+        }
+
+        return result;
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, double time, boolean update) {
