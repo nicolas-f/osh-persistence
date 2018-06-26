@@ -14,6 +14,9 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
+import net.opengis.gml.v32.AbstractTimeGeometricPrimitive;
+import net.opengis.gml.v32.TimeInstant;
+import net.opengis.gml.v32.TimePeriod;
 import net.opengis.sensorml.v20.AbstractProcess;
 import net.opengis.swe.v20.DataBlock;
 import net.opengis.swe.v20.DataComponent;
@@ -24,6 +27,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.lucene.queryparser.surround.query.AndQuery;
 import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
@@ -46,7 +50,7 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.query.MatchQueryBuilder;
+import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.sensorhub.api.common.SensorHubException;
@@ -95,6 +99,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
     protected static final String STORAGE_ID_FIELD_NAME = "storageID";
 
+    // The data index, serialization of OpenSensorHub internals metadata
+    protected static final String METADATA_TYPE_FIELD_NAME = "metadataType";
+
 	protected static final String DATA_INDEX_FIELD_NAME = "index";
 
 	protected static final String RS_KEY_SEPARATOR = "##";
@@ -124,7 +131,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 */
 	protected static final String DESC_HISTORY_IDX_NAME = "desc";
 	protected static final String RS_INFO_IDX_NAME = "info";
-	protected static final String RS_DATA_IDX_NAME = "data";
 
 	String indexNamePrepend;
 	String indexNameMetaData;
@@ -243,6 +249,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 builder.startObject("properties");
                 {
                     builder.startObject(STORAGE_ID_FIELD_NAME);
+                    {
+                        builder.field("type", "keyword");
+                    }
+                    builder.endObject();
+                    builder.startObject(METADATA_TYPE_FIELD_NAME);
                     {
                         builder.field("type", "keyword");
                     }
@@ -367,7 +378,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, double time, boolean update) {
-        log.info("ESBasicStorageImpl:storeDataSourceDescription");
 	    return false;
 //
 //		// prepare source map
@@ -391,31 +401,28 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, boolean update) {
-        log.info("ESBasicStorageImpl:storeDataSourceDescription");
-	    return false;
 
-//
-//		boolean ok = false;
-//
-//		if (process.getNumValidTimes() > 0) {
-//			// we add the description in index for each validity period/instant
-//			for (AbstractTimeGeometricPrimitive validTime : process.getValidTimeList()) {
-//				double time = Double.NaN;
-//
-//				if (validTime instanceof TimeInstant)
-//					time = ((TimeInstant) validTime).getTimePosition().getDecimalValue();
-//				else if (validTime instanceof TimePeriod)
-//					time = ((TimePeriod) validTime).getBeginPosition().getDecimalValue();
-//
-//				if (!Double.isNaN(time))
-//					ok = storeDataSourceDescription(process, time, update);
-//			}
-//		} else {
-//			double time = System.currentTimeMillis() / 1000.;
-//			ok = storeDataSourceDescription(process, time, update);
-//		}
-//
-//		return ok;
+		boolean ok = false;
+
+		if (process.getNumValidTimes() > 0) {
+			// we add the description in index for each validity period/instant
+			for (AbstractTimeGeometricPrimitive validTime : process.getValidTimeList()) {
+				double time = Double.NaN;
+
+				if (validTime instanceof TimeInstant)
+					time = ((TimeInstant) validTime).getTimePosition().getDecimalValue();
+				else if (validTime instanceof TimePeriod)
+					time = ((TimePeriod) validTime).getBeginPosition().getDecimalValue();
+
+				if (!Double.isNaN(time))
+					ok = storeDataSourceDescription(process, time, update);
+			}
+		} else {
+			double time = System.currentTimeMillis() / 1000.;
+			ok = storeDataSourceDescription(process, time, update);
+		}
+
+		return ok;
 	}
 
 	@Override
@@ -459,9 +466,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		Map<String, IRecordStoreInfo> result = new HashMap<>();
 
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
-        MatchQueryBuilder matchQueryBuilder = new MatchQueryBuilder(STORAGE_ID_FIELD_NAME, config.id);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        searchSourceBuilder.query(matchQueryBuilder);
+        QueryBuilder query = QueryBuilders.boolQuery()
+                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, RS_INFO_IDX_NAME));
+        searchSourceBuilder.query(query);
         searchRequest.source(searchSourceBuilder);
 
         try {
@@ -502,6 +511,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             {
                 // Convert to elastic search epoch millisecond
                 builder.field(STORAGE_ID_FIELD_NAME, config.id);
+                builder.field(METADATA_TYPE_FIELD_NAME, RS_INFO_IDX_NAME);
                 builder.field(DATA_INDEX_FIELD_NAME, indexNamePrepend + recordStructure.getName()); // store recordType
                 builder.timeField(TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
                 builder.field(BLOB_FIELD_NAME, bytes);
