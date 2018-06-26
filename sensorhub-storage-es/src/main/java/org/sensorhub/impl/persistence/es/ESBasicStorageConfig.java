@@ -16,6 +16,7 @@ package org.sensorhub.impl.persistence.es;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.sensorhub.api.config.DisplayInfo;
 import org.sensorhub.api.config.DisplayInfo.Required;
@@ -30,10 +31,19 @@ import org.sensorhub.api.config.DisplayInfo.Required;
  * @since 2017
  */
 public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStorageConfig {
+
+	public static final String DEFAULT_INDEX_NAME_METADATA = "osh_meta_record_store";
 	
     @Required
     @DisplayInfo(desc="ES cluster name")
     public String clusterName;
+
+    @DisplayInfo(desc = "ElasticSearch user for authentication (leave blank if not required)")
+    public String user = "";
+
+	@DisplayInfo(desc = "ElasticSearch password for authentication")
+    @DisplayInfo.FieldType(DisplayInfo.FieldType.Type.PASSWORD)
+    public String password = "";
         
     @Required
     @DisplayInfo(desc="List of nodes")
@@ -41,6 +51,9 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
 
     @DisplayInfo(desc="String to add in index name before the data name")
     public String indexNamePrepend = "";
+
+	@DisplayInfo(desc="Index name of the OpenSensorHub metadata")
+	public String indexNameMetaData = DEFAULT_INDEX_NAME_METADATA;
             
     @DisplayInfo(desc="When scrolling, the maximum duration ScrollableResults will be usable if no other results are fetched from, in ms")
     public int scrollMaxDuration = 6000;
@@ -80,5 +93,5 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     {
         indexNamePrepend = name;
     }
-	
+
 }

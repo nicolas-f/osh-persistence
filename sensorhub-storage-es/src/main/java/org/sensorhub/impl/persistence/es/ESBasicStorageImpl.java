@@ -14,34 +14,50 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
-import net.opengis.gml.v32.AbstractTimeGeometricPrimitive;
-import net.opengis.gml.v32.TimeInstant;
-import net.opengis.gml.v32.TimePeriod;
 import net.opengis.sensorml.v20.AbstractProcess;
 import net.opengis.swe.v20.DataBlock;
 import net.opengis.swe.v20.DataComponent;
 import net.opengis.swe.v20.DataEncoding;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpHost;
-import org.elasticsearch.action.admin.indices.exists.types.TypesExistsRequest;
-import org.elasticsearch.action.delete.DeleteRequest;
-import org.elasticsearch.action.get.GetRequest;
-import org.elasticsearch.action.get.GetResponse;
-import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.elasticsearch.ElasticsearchStatusException;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
+import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
+import org.elasticsearch.action.admin.indices.mapping.get.GetMappingsRequest;
+import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
+import org.elasticsearch.action.bulk.BackoffPolicy;
+import org.elasticsearch.action.bulk.BulkProcessor;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.RestClient;
+import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.index.query.BoolQueryBuilder;
-import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.MatchQueryBuilder;
 import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.sensorhub.api.common.SensorHubException;
-import org.sensorhub.api.persistence.*;
+import org.sensorhub.api.persistence.DataKey;
+import org.sensorhub.api.persistence.IDataFilter;
+import org.sensorhub.api.persistence.IDataRecord;
+import org.sensorhub.api.persistence.IObsStorage;
+import org.sensorhub.api.persistence.IRecordStorageModule;
+import org.sensorhub.api.persistence.IRecordStoreInfo;
+import org.sensorhub.api.persistence.IStorageModule;
+import org.sensorhub.api.persistence.StorageException;
 import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,12 +82,24 @@ import java.util.*;
  */
 public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> implements IRecordStorageModule<ESBasicStorageConfig> {
 	private static final int TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE = 5000;
+
+	private static final double SECONDS_TO_MILLISECONDS = 1000.;
     
 	protected static final double MAX_TIME_CLUSTER_DELTA = 60.0;
 
-	protected static final String PRODUCER_ID_FIELD_NAME = "producerID";
+	// From ElasticSearch v6, multiple index type is not supported
+    //                    v7 index type dropped
+    protected static final String INDEX_METADATA_TYPE = "osh_metadata";
+
+    protected static final String PRODUCER_ID_FIELD_NAME = "producerID";
+
+    protected static final String STORAGE_ID_FIELD_NAME = "storageID";
+
+	protected static final String DATA_INDEX_FIELD_NAME = "index";
 
 	protected static final String RS_KEY_SEPARATOR = "##";
+
+	protected static final String BLOB_FIELD_NAME = "blob";
 
 	protected static final String TIMESTAMP_FIELD_NAME = "timestamp";
 
@@ -87,6 +115,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * with them in round robin fashion on each action (though most actions will probably be "two hop" operations).
 	 */
 	protected RestHighLevelClient client;
+
+	private BulkProcessor bulkProcessor;
 	
 	/**
 	 * The data index. The data are indexed by their timestamps
@@ -96,8 +126,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	protected static final String RS_INFO_IDX_NAME = "info";
 	protected static final String RS_DATA_IDX_NAME = "data";
 
-	protected String indexNamePrepend;
-	
+	String indexNamePrepend;
+	String indexNameMetaData;
+
+    BulkListener bulkListener = new BulkListener();
+
 	
 	public ESBasicStorageImpl() {
 	    // default constructor
@@ -135,10 +168,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public void init() {
 	    this.indexNamePrepend = (config.indexNamePrepend != null) ? config.indexNamePrepend : "";
+	    this.indexNameMetaData = (config.indexNameMetaData != null && !config.indexNameMetaData.isEmpty()) ? config.indexNameMetaData : ESBasicStorageConfig.DEFAULT_INDEX_NAME_METADATA;
 	}
 
 	@Override
 	public synchronized void start() throws SensorHubException {
+	    log.info("ESBasicStorageImpl:start");
 		if(client == null) {
 			// init transport client
 			HttpHost[] hosts = new HttpHost[config.nodeUrls.size()];
@@ -161,31 +196,87 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 }
             }
 
-			client = new RestHighLevelClient(
-					RestClient.builder(hosts));
+            RestClientBuilder restClientBuilder = RestClient.builder(hosts);
+
+            // Handle authentication
+            if(!config.user.isEmpty()) {
+                final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                credentialsProvider.setCredentials(AuthScope.ANY,
+                        new UsernamePasswordCredentials(config.user, config.password));
+                restClientBuilder.setHttpClientConfigCallback(httpClientBuilder ->
+                        httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
+            }
+			client = new RestHighLevelClient(restClientBuilder);
 		}
+
+        bulkProcessor = BulkProcessor.builder(client::bulkAsync, bulkListener).setBulkActions(config.bulkActions)
+                .setBulkSize(new ByteSizeValue(config.bulkSize, ByteSizeUnit.MB))
+                .setFlushInterval(TimeValue.timeValueSeconds(config.bulkFlushInterval))
+                .setConcurrentRequests(config.bulkConcurrentRequests)
+                .setBackoffPolicy(
+                        BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(100), 3))
+                .build();
+
+		// Check if metadata mapping must be defined
+        GetIndexRequest getIndexRequest = new GetIndexRequest();
+        getIndexRequest.indices(indexNameMetaData);
+        try {
+            if(!client.indices().exists(getIndexRequest)) {
+                createMetaMapping();
+            }
+        } catch (IOException ex) {
+            logger.error("Cannot create metadata mapping", ex);
+        }
 	}
 
-//
-//	protected void createIndices (){
-//		// create the index
-//	    CreateIndexRequest indexRequest = new CreateIndexRequest(indexNamePrepend);
-//		client.admin().indices().create(indexRequest).actionGet();
-//
-//		// create the corresponding data mapping
-//		try {
-//			client.admin().indices()
-//			    .preparePutMapping(indexNamePrepend)
-//			    .setType(RS_DATA_IDX_NAME)
-//			    .setSource(getRsDataMapping())
-//			    .execute().actionGet();
-//		} catch (IOException e) {
-//			log.error("Cannot create indices",e);
-//		}
-//	}
-	
-	@Override
+
+	protected void createMetaMapping () throws IOException {
+		// create the index
+	    CreateIndexRequest indexRequest = new CreateIndexRequest(indexNameMetaData);
+        XContentBuilder builder = XContentFactory.jsonBuilder();
+
+        builder.startObject();
+        {
+            builder.startObject(INDEX_METADATA_TYPE);
+            {
+                builder.field("dynamic", false);
+                builder.startObject("properties");
+                {
+                    builder.startObject(STORAGE_ID_FIELD_NAME);
+                    {
+                        builder.field("type", "keyword");
+                    }
+                    builder.endObject();
+                    builder.startObject(DATA_INDEX_FIELD_NAME);
+                    {
+                        builder.field("type", "keyword");
+                    }
+                    builder.endObject();
+                    builder.startObject(TIMESTAMP_FIELD_NAME);
+                    {
+                        builder.field("type", "date");
+                    }
+                    builder.endObject();
+                    builder.startObject(BLOB_FIELD_NAME);
+                    {
+                        builder.field("type", "binary");
+                    }
+                    builder.endObject();
+                }
+                builder.endObject();
+            }
+            builder.endObject();
+        }
+        builder.endObject();
+
+	    indexRequest.mapping(INDEX_METADATA_TYPE, builder);
+
+	    client.indices().create(indexRequest);
+	}
+
+    @Override
 	public synchronized void stop() throws SensorHubException {
+        log.info("ESBasicStorageImpl:stop");
 		if(client != null) {
 		    try {
                 client.close();
@@ -197,6 +288,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public AbstractProcess getLatestDataSourceDescription() {
+        log.info("ESBasicStorageImpl:getLatestDataSourceDescription");
 	    return null;
 //		if(!isTypeExist(indexNamePrepend,DESC_HISTORY_IDX_NAME)) {
 //			return null;
@@ -219,6 +311,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public List<AbstractProcess> getDataSourceDescriptionHistory(double startTime, double endTime) {
+        log.info("ESBasicStorageImpl:getDataSourceDescriptionHistory");
 	    return null;
 //		List<AbstractProcess> results = new ArrayList<>();
 //
@@ -245,6 +338,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public AbstractProcess getDataSourceDescriptionAtTime(double time) {
+        log.info("ESBasicStorageImpl:getDataSourceDescriptionAtTime");
 	    return null;
 
 //
@@ -273,6 +367,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, double time, boolean update) {
+        log.info("ESBasicStorageImpl:storeDataSourceDescription");
 	    return false;
 //
 //		// prepare source map
@@ -296,6 +391,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, boolean update) {
+        log.info("ESBasicStorageImpl:storeDataSourceDescription");
 	    return false;
 
 //
@@ -334,12 +430,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void removeDataSourceDescription(double time) {
+        log.info("ESBasicStorageImpl:removeDataSourceDescription");
 //		DeleteRequest deleteRequest = new DeleteRequest(indexNamePrepend, DESC_HISTORY_IDX_NAME, Double.toString(time));
 //		bulkProcessor.add(deleteRequest);
 	}
 
 	@Override
 	public void removeDataSourceDescriptionHistory(double startTime, double endTime) {
+        log.info("ESBasicStorageImpl:removeDataSourceDescriptionHistory");
 //		// query ES to get the corresponding timestamp
 //		// the response is applied a post filter allowing to specify a range request on the timestamp
 //		// the hits should be directly filtered
@@ -358,8 +456,26 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public  Map<String, ? extends IRecordStoreInfo> getRecordStores() {
-	    return null;
-//		Map<String, IRecordStoreInfo> result = new HashMap<>();
+		Map<String, IRecordStoreInfo> result = new HashMap<>();
+
+        SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+        MatchQueryBuilder matchQueryBuilder = new MatchQueryBuilder(STORAGE_ID_FIELD_NAME, config.id);
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        searchSourceBuilder.query(matchQueryBuilder);
+        searchRequest.source(searchSourceBuilder);
+
+        try {
+            SearchResponse response = client.search(searchRequest);
+            for(SearchHit hit : response.getHits()) {
+                IRecordStoreInfo rsInfo = this.<DataStreamInfo>getObject(hit.getSourceAsMap().get(BLOB_FIELD_NAME)); // DataStreamInfo
+                result.put(rsInfo.getName(), rsInfo);
+            }
+        } catch (IOException | ElasticsearchStatusException ex) {
+            log.error("getRecordStores failed", ex);
+        }
+        return result;
+
+
 //		SearchResponse response = client.prepareSearch(indexNamePrepend).setTypes(RS_INFO_IDX_NAME).get();
 //
 //		String name = null;
@@ -374,10 +490,32 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void addRecordStore(String name, DataComponent recordStructure, DataEncoding recommendedEncoding) {
-//		DataStreamInfo rsInfo = new DataStreamInfo(name, recordStructure, recommendedEncoding);
-//
-//		// add new record storage
-//		Object blob = this.getBlob(rsInfo);
+        log.info("ESBasicStorageImpl:addRecordStore");
+		DataStreamInfo rsInfo = new DataStreamInfo(name, recordStructure, recommendedEncoding);
+
+		// add new record storage
+		byte[] bytes = this.getBlob(rsInfo);
+
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            builder.startObject();
+            {
+                // Convert to elastic search epoch millisecond
+                builder.field(STORAGE_ID_FIELD_NAME, config.id);
+                builder.field(DATA_INDEX_FIELD_NAME, indexNamePrepend + recordStructure.getName()); // store recordType
+                builder.timeField(TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
+                builder.field(BLOB_FIELD_NAME, bytes);
+            }
+            builder.endObject();
+            IndexRequest request = new IndexRequest(indexNameMetaData, INDEX_METADATA_TYPE);
+
+            request.source(builder);
+
+            bulkProcessor.add(request);
+        } catch (IOException ex) {
+            logger.error(String.format("addRecordStore exception %s:%s in elastic search driver",name, recordStructure.getName()), ex);
+        }
+
 //
 //		Map<String, Object> json = new HashMap<>();
 //		json.put(BLOB_FIELD_NAME,blob);
@@ -395,6 +533,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public int getNumRecords(String recordType) {
+        log.info("ESBasicStorageImpl:getNumRecords");
 	    return 0;
 //		SearchResponse response = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
 //				.setPostFilter(QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, recordType))
@@ -405,6 +544,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override  
 	public synchronized double[] getRecordsTimeRange(String recordType) {
+        log.info("ESBasicStorageImpl:getRecordsTimeRange");
 	    return null;
 //
 //		double[] result = new double[2];
@@ -438,6 +578,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public Iterator<double[]> getRecordsTimeClusters(String recordType) {
+        log.info("ESBasicStorageImpl:getRecordsTimeClusters");
 	    return null;
 //		// build response
 //		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
@@ -499,6 +640,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public DataBlock getDataBlock(DataKey key) {
+        log.info("ESBasicStorageImpl:getDataBlock");
 	    return null;
 //		DataBlock result = null;
 //		// build the key as recordTYpe_timestamp_producerID
@@ -519,6 +661,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public Iterator<DataBlock> getDataBlockIterator(IDataFilter filter) {
+        log.info("ESBasicStorageImpl:getDataBlockIterator");
 	    return null;
 //		double[] timeRange = getTimeRange(filter);
 //
@@ -574,6 +717,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	
 	@Override
 	public Iterator<? extends IDataRecord> getRecordIterator(IDataFilter filter) {
+        log.info("ESBasicStorageImpl:getRecordIterator");
 	    return null;
 //		double[] timeRange = getTimeRange(filter);
 //
@@ -645,6 +789,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	
 	@Override
 	public int getNumMatchingRecords(IDataFilter filter, long maxCount) {
+        log.info("ESBasicStorageImpl:getNumMatchingRecords");
 	    return 0;
 //		double[] timeRange = getTimeRange(filter);
 //
@@ -674,17 +819,33 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 	@Override
 	public void storeRecord(DataKey key, DataBlock data) {
-//		// build the key as recordTYpe_timestamp_producerID
-//		String esKey = getRsKey(key);
-//
-//		// get blob from dataBlock object using serializer
-//		Object blob = this.getBlob(data);
-//
-//		Map<String, Object> json = new HashMap<>();
-//		json.put(TIMESTAMP_FIELD_NAME,key.timeStamp); // store timestamp
-//		json.put(PRODUCER_ID_FIELD_NAME,key.producerID); // store producerID
-//		json.put(RECORD_TYPE_FIELD_NAME,key.recordType); // store recordType
-//		json.put(BLOB_FIELD_NAME,blob); // store DataBlock
+		// get blob from dataBlock object using serializer
+		byte[] bytes = this.getBlob(data);
+
+		try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            builder.startObject();
+            {
+                // Convert to elastic search epoch millisecond
+                builder.timeField(TIMESTAMP_FIELD_NAME, Double.valueOf(key.timeStamp * SECONDS_TO_MILLISECONDS).longValue());
+                builder.field(PRODUCER_ID_FIELD_NAME, key.producerID); // store producerID
+                builder.field(DATA_INDEX_FIELD_NAME, indexNamePrepend + key.recordType); // store recordType
+                builder.field(BLOB_FIELD_NAME, bytes);
+            }
+            Map<String, Object> json = new HashMap<>();
+            json.put(TIMESTAMP_FIELD_NAME, key.timeStamp); // store timestamp
+            json.put(PRODUCER_ID_FIELD_NAME, key.producerID); // store producerID
+            json.put(DATA_INDEX_FIELD_NAME, indexNamePrepend + key.recordType); // store recordType
+            json.put(BLOB_FIELD_NAME, bytes); // store DataBlock
+
+            IndexRequest request = new IndexRequest(indexNameMetaData, INDEX_METADATA_TYPE);
+
+            request.timeout(TimeValue.timeValueSeconds(config.pingTimeout));
+
+            request.source(json, XContentType.JSON);
+        } catch (IOException ex) {
+		    logger.error(String.format("storeRecord exception %s:%s in elastic search driver",key.producerID, key.recordType), ex);
+        }
 //
 //		// set id and blob before executing the request
 //		/*String id = client.prepareIndex(indexNamePrepend,RS_DATA_IDX_NAME)
@@ -699,6 +860,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void updateRecord(DataKey key, DataBlock data) {
+        log.info("ESBasicStorageImpl:data");
 //		// build the key as recordTYpe_timestamp_producerID
 //		String esKey = getRsKey(key);
 //
@@ -720,6 +882,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void removeRecord(DataKey key) {
+        log.info("ESBasicStorageImpl:key");
 //		// build the key as recordTYpe_timestamp_producerID
 //		String esKey = getRsKey(key);
 //
@@ -730,6 +893,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public int removeRecords(IDataFilter filter) {
+        log.info("ESBasicStorageImpl:filter");
 	    return 0;
 //		double[] timeRange = getTimeRange(filter);
 //
@@ -771,6 +935,30 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 //		log.info("[ES] Delete "+nb+" records from "+new Date((long)timeRange[0]*1000)+" to "+new Date((long)timeRange[1]*1000));
 //		return 0;
 	}
+
+	/**
+	 * Get a serialized object from an object.
+	 * The object is serialized using Kryo.
+	 * @param object The raw object
+	 * @return the serialized object
+	 */
+	protected <T> byte[] getBlob(T object){
+		return KryoSerializer.serialize(object);
+	}
+
+	/**
+	 * Get an object from a base64 encoding String.
+	 * The object is deserialized using Kryo.
+	 * @param blob The base64 encoding String
+	 * @return The deserialized object
+	 */
+	protected <T> T getObject(Object blob) {
+		// Base 64 decoding
+		byte [] base64decodedData = Base64.decodeBase64(blob.toString().getBytes());
+		// Kryo deserialize
+		return KryoSerializer.<T>deserialize(base64decodedData);
+	}
+
 
 	/**
 	 * Transform a DataKey into an ES key as: <recordtype><SEPARATOR><timestamp><SEPARATOR><producerID>.
@@ -823,7 +1011,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * Refreshes the index.
 	 */
 	protected void refreshIndex() {
-//		client.admin().indices().prepareRefresh(indexNamePrepend).get();
+        log.info("ESBasicStorageImpl:refreshIndex");
+        bulkProcessor.flush();
+        RefreshRequest refreshRequest = new RefreshRequest(indexNameMetaData);
+        try {
+            client.indices().refresh(refreshRequest);
+        } catch (IOException ex) {
+            logger.error("Error while refreshIndex", ex);
+        }
 	}
 	
 	/**
@@ -867,5 +1062,22 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     @Override
     public boolean isWriteSupported() {
         return true;
+    }
+
+    private static final class BulkListener implements BulkProcessor.Listener {
+        @Override
+        public void beforeBulk(long executionId, BulkRequest request) {
+
+        }
+
+        @Override
+        public void afterBulk(long executionId, BulkRequest request, BulkResponse response) {
+
+        }
+
+        @Override
+        public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
+
+        }
     }
 }

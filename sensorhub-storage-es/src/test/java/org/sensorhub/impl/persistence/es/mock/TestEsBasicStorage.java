@@ -14,39 +14,22 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
-import java.io.File;
+import org.junit.After;
+import org.junit.Before;
+import org.sensorhub.api.common.SensorHubException;
+import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
+import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
+import org.sensorhub.test.persistence.AbstractTestBasicStorage;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-
-import org.apache.http.HttpHost;
-import org.elasticsearch.client.RestClient;
-import org.elasticsearch.client.RestHighLevelClient;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
-import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
-import org.sensorhub.test.persistence.AbstractTestBasicStorage;
-import org.sensorhub.utils.FileUtils;
 
 
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
 
     protected static final String CLUSTER_NAME = "elasticsearch";
-	private static RestHighLevelClient client;
-	private static File tmpDir;
 
-	@BeforeClass
-	public static void initClass() {
-		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
-		tmpDir.mkdirs();
-		client = new RestHighLevelClient(
-				RestClient.builder(
-						new HttpHost("localhost", 9200, "http"),
-						new HttpHost("localhost", 9201, "http")));
-	}
-	
 	@Before
 	public void init() throws Exception {
 		
@@ -55,16 +38,22 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		config.autoStart = true;
 		config.clusterName = CLUSTER_NAME;
 		List<String> nodes = new ArrayList<String>();
-		nodes.add("localhost:9300");
+		nodes.add("localhost:9200");
+		nodes.add("localhost:9201");
 
 		config.nodeUrls = nodes;
 		config.scrollFetchSize = 2000;
 		config.bulkConcurrentRequests = 0;
 		config.id = "junit_testesbasicstorage_" + UUID.randomUUID().toString();
 		
-		storage = new ESBasicStorageImpl(client);
+		storage = new ESBasicStorageImpl();
 		storage.init(config);
 		storage.start();
+	}
+
+	@After
+	public void after() throws SensorHubException {
+		storage.stop();
 	}
 
 	@Override
@@ -75,15 +64,4 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		
 	}
 
-	@AfterClass
-    public static void cleanup() throws Exception {
-		if(client != null) {
-			client.close();
-			client = null;
-		}
-
-		if(tmpDir.exists()) {
-			FileUtils.deleteRecursively(tmpDir);
-		}
-	}
 }
