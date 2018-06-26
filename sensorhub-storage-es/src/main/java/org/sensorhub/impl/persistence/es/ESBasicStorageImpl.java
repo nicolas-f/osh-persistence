@@ -40,6 +40,7 @@ import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
@@ -53,6 +54,10 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.FieldSortBuilder;
+import org.elasticsearch.search.sort.SortBuilder;
+import org.elasticsearch.search.sort.SortBuilders;
+import org.elasticsearch.search.sort.SortOrder;
 import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.persistence.DataKey;
 import org.sensorhub.api.persistence.IDataFilter;
@@ -299,25 +304,27 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public AbstractProcess getLatestDataSourceDescription() {
-        log.info("ESBasicStorageImpl:getLatestDataSourceDescription");
-	    return null;
-//		if(!isTypeExist(indexNamePrepend,DESC_HISTORY_IDX_NAME)) {
-//			return null;
-//		}
-//		// build search response given a timestamp desc sort
-//		SearchResponse response = client.prepareSearch(indexNamePrepend).setTypes(DESC_HISTORY_IDX_NAME)
-//							.addSort(TIMESTAMP_FIELD_NAME, SortOrder.DESC)
-//							.get();
-//
-//		AbstractProcess result = null;
-//		// the response should contain the whole list of source
-//		// sorted desc by their timestamp
-//		if(response.getHits().getTotalHits() > 0){
-//			// get the first one of the list means the most recent
-//			Object blob = response.getHits().getAt(0).getSourceAsMap().get(BLOB_FIELD_NAME);
-//			result = this.<AbstractProcess>getObject(blob);
-//		}
-//		return result;
+        AbstractProcess result = null;
+        SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        QueryBuilder query = QueryBuilders.boolQuery()
+                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME));
+        searchSourceBuilder.query(query);
+        searchSourceBuilder.sort(new FieldSortBuilder(TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
+        searchSourceBuilder.size(1);
+        searchRequest.source(searchSourceBuilder);
+
+        try {
+            SearchResponse response = client.search(searchRequest);
+       		if(response.getHits().getTotalHits() > 0) {
+                result = this.getObject(response.getHits().getAt(0).getSourceAsMap().get(BLOB_FIELD_NAME));
+            }
+        } catch (IOException | ElasticsearchStatusException ex) {
+            log.error("getRecordStores failed", ex);
+        }
+
+        return result;
 	}
 
 	@Override
@@ -378,27 +385,35 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	}
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, double time, boolean update) {
-	    return false;
-//
-//		// prepare source map
-//		Map<String, Object> json = new HashMap<>();
-//		json.put(TIMESTAMP_FIELD_NAME,time);
-//		json.put(BLOB_FIELD_NAME,this.getBlob(process));
-//
-//		if (update) {
-//			// prepare update
-//			UpdateRequest updateRequest = new UpdateRequest(indexNamePrepend, DESC_HISTORY_IDX_NAME, Double.toString(time));
-//			updateRequest.doc(json);
-//
-//			bulkProcessor.add(updateRequest);
-//            return true;
-//        } else {
-//        	// send request and check if the id is not null
-//       	 	bulkProcessor.add(client.prepareIndex(indexNamePrepend,DESC_HISTORY_IDX_NAME).setId(Double.toString(time))
-//					.setSource(json).request());
-//           return true;
-//        }
+        // add new record storage
+        byte[] bytes = this.getBlob(process);
+
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            // Convert to elastic search epoch millisecond
+            long epoch = Double.valueOf(time * 1000).longValue();
+            builder.startObject();
+            {
+                builder.field(STORAGE_ID_FIELD_NAME, config.id);
+                builder.field(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME);
+                builder.field(DATA_INDEX_FIELD_NAME, "");
+                builder.timeField(TIMESTAMP_FIELD_NAME, epoch);
+                builder.field(BLOB_FIELD_NAME, bytes);
+            }
+            builder.endObject();
+
+            IndexRequest request = new IndexRequest(indexNameMetaData, INDEX_METADATA_TYPE, config.id + "_" + epoch);
+
+            request.source(builder);
+
+            bulkProcessor.add(request);
+
+        } catch (IOException ex) {
+            logger.error(String.format("storeDataSourceDescription exception %s in elastic search driver", process.getId()), ex);
+        }
+        return true;
 	}
+
 
 	protected boolean storeDataSourceDescription(AbstractProcess process, boolean update) {
 
@@ -471,8 +486,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, RS_INFO_IDX_NAME));
         searchSourceBuilder.query(query);
+        // Default to 10 results
+        searchSourceBuilder.size(Integer.MAX_VALUE);
         searchRequest.source(searchSourceBuilder);
-
         try {
             SearchResponse response = client.search(searchRequest);
             for(SearchHit hit : response.getHits()) {
