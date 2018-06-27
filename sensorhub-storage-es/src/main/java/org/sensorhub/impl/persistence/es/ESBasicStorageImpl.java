@@ -25,6 +25,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.lucene.analysis.query.QueryAutoStopWordAnalyzer;
 import org.apache.lucene.queryparser.surround.query.AndQuery;
 import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
@@ -604,13 +605,27 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public int getNumRecords(String recordType) {
-        log.info("ESBasicStorageImpl:getNumRecords");
-	    return 0;
-//		SearchResponse response = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//				.setPostFilter(QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, recordType))
-//				.setFetchSource(new String[]{}, new String[]{"*"}) // does not fetch source
-//		        .get();
-//		return (int) response.getHits().getTotalHits();
+        Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
+        if(info != null) {
+            SearchRequest searchRequest = new SearchRequest(info.indexName);
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+            searchSourceBuilder.query(QueryBuilders.matchAllQuery());
+            searchSourceBuilder.size(0);
+            searchRequest.source(searchSourceBuilder);
+            try {
+                SearchResponse response = client.search(searchRequest);
+                try {
+                    return Math.toIntExact(response.getHits().totalHits);
+                } catch (ArithmeticException ex) {
+                    logger.error("Too many records");
+                    return Integer.MAX_VALUE;
+                }
+            } catch (IOException | ElasticsearchStatusException ex) {
+                log.error("getRecordStores failed", ex);
+            }
+        }
+        return 0;
 	}
 
 	@Override  
@@ -1000,8 +1015,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void storeRecord(DataKey key, DataBlock data) {
-        log.info("ESBasicStorageImpl:storeRecord");
-
         try {
             Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
             EsRecordStoreInfo info = recordStoreInfoMap.get(key.recordType);
