@@ -630,36 +630,45 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override  
 	public synchronized double[] getRecordsTimeRange(String recordType) {
-        log.info("ESBasicStorageImpl:getRecordsTimeRange");
-	    return null;
-//
-//		double[] result = new double[2];
-//
-//		// build request to get the least recent record
-//		SearchResponse response = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//				.setQuery(QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, recordType))
-//				.addSort(TIMESTAMP_FIELD_NAME, SortOrder.ASC) // sort results by DESC timestamp
-//				.setFetchSource(new String[]{TIMESTAMP_FIELD_NAME}, new String[]{}) // get only the timestamp
-//				.setSize(1) // fetch only 1 result
-//		        .get();
-//
-//		if(response.getHits().getTotalHits()> 0) {
-//			result[0] = (double) response.getHits().getAt(0).getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
-//		}
-//
-//		// build request to get the most recent record
-//		 response = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//				.setQuery(QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, recordType))
-//				.addSort(TIMESTAMP_FIELD_NAME, SortOrder.DESC) // sort results by DESC timestamp
-//				.setFetchSource(new String[]{TIMESTAMP_FIELD_NAME}, new String[]{}) // get only the timestamp
-//				//.setSize(1) // fetch only 1 result
-//		        .get();
-//
-//		if(response.getHits().getTotalHits()> 0) {
-//			result[1] = (double) response.getHits().getAt(0).getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
-//		}
-//
-//		return result;
+		double[] result = new double[2];
+
+        Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
+        if(info != null) {
+            SearchRequest searchRequest = new SearchRequest(info.indexName);
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+            searchSourceBuilder.query(QueryBuilders.matchAllQuery());
+            searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
+            searchSourceBuilder.size(1);
+            searchRequest.source(searchSourceBuilder);
+
+            try {
+
+                // build request to get the least recent record
+                SearchResponse response = client.search(searchRequest);
+
+                if (response.getHits().getTotalHits() > 0) {
+                    result[0] = ESDataStoreTemplate.fromEpochMillisecond((Number) response.getHits().getAt(0).getSourceAsMap().get( ESDataStoreTemplate.TIMESTAMP_FIELD_NAME));
+                }
+
+                // build request to get the most recent record
+                searchRequest = new SearchRequest(info.indexName);
+                searchSourceBuilder = new SearchSourceBuilder();
+                searchSourceBuilder.query(QueryBuilders.matchAllQuery());
+                searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
+                searchSourceBuilder.size(1);
+                searchRequest.source(searchSourceBuilder);
+
+                response = client.search(searchRequest);
+
+                if (response.getHits().getTotalHits() > 0) {
+                    result[1] = ESDataStoreTemplate.fromEpochMillisecond((Number) response.getHits().getAt(0).getSourceAsMap().get( ESDataStoreTemplate.TIMESTAMP_FIELD_NAME));
+                }
+            } catch (IOException ex) {
+                log.error("getRecordsTimeRange failed", ex);
+            }
+        }
+		return result;
 	}
 
 	@Override
@@ -927,7 +936,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     builder.endObject();
                     builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
                     {
-                        builder.field("type", "date");
+                        // Issue with date https://discuss.elastic.co/t/weird-issue-with-date-sort/137646
+                        //builder.field("type", "date");
+                        builder.field("type", "long");
                     }
                     builder.endObject();
 
@@ -1070,7 +1081,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
                 request.source(builder);
 
-                client.index(request);
+                bulkProcessor.add(request);
             } else {
                 log.error("Missing record store " + key.recordType);
 
@@ -1212,7 +1223,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * @return the ES key. 
 	 */
 	protected String getRsKey(DataKey key) {
-		return key.recordType+RS_KEY_SEPARATOR+key.timeStamp+RS_KEY_SEPARATOR+key.producerID;
+		return key.recordType+RS_KEY_SEPARATOR+Double.doubleToLongBits(key.timeStamp)+RS_KEY_SEPARATOR+key.producerID;
 	}
 	
 	/**
@@ -1228,7 +1239,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		
 		// must find <recordtype><SEPARATOR><timestamp><SEPARATOR><producerID>
     	if(split.length == 3) {
-    		dataKey = new DataKey(split[0], split[2], Double.parseDouble(split[1]));
+    		dataKey = new DataKey(split[0], split[2], Double.longBitsToDouble(Long.parseLong(split[1])));
     	}
 		return dataKey;
 	}

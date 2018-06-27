@@ -40,8 +40,12 @@ public class ESDataStoreTemplate {
         capacityHint = totalLength * 2;
     }
 
-    public static long toEpochMillisecond(double timesteampsecond) {
-        return Double.valueOf(timesteampsecond * 1000).longValue();
+    public static long toEpochMillisecond(double timeSecond) {
+        return Double.valueOf(timeSecond * 1000).longValue();
+    }
+
+    public static double fromEpochMillisecond(Number timestamp) {
+        return timestamp.doubleValue() * 1e-3;
     }
 
     public String build(DataKey key, DataBlock data) throws IOException {
