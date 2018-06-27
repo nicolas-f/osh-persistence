@@ -59,7 +59,7 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     public int scrollMaxDuration = 6000;
 	
 	@DisplayInfo(desc="MWhen scrolling, the number of results fetched by each Elasticsearch call")
-    public int scrollFetchSize = 2;
+    public int scrollFetchSize = 10;
 	
 	@DisplayInfo(desc="When scrolling, the minimum number of previous results kept in memory at any time")
 	public int scrollBacktrackingWindowSize = 10000;
