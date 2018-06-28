@@ -64,9 +64,6 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		// Let the time to ES to write the data
     	// if some tests are not passed,  try to increase this value first!!
 		storage.commit();
-		// https://www.elastic.co/guide/en/elasticsearch/guide/current/near-real-time.html
-		// document changes are not visible to search immediately, but will become visible within 1 second.
-		Thread.sleep(TimeUnit.SECONDS.toMillis(2));
 	}
 
 }

@@ -29,50 +29,36 @@ import org.apache.http.entity.ContentType;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.nio.entity.NStringEntity;
 import org.apache.http.util.EntityUtils;
-import org.apache.lucene.analysis.query.QueryAutoStopWordAnalyzer;
-import org.apache.lucene.queryparser.surround.query.AndQuery;
 import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
-import org.elasticsearch.action.admin.indices.mapping.get.GetMappingsRequest;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
-import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
-import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.*;
-import org.elasticsearch.common.xcontent.json.JsonXContent;
-import org.elasticsearch.common.xcontent.json.JsonXContentParser;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.common.xcontent.XContentHelper;
+import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
-import org.elasticsearch.search.sort.SortBuilder;
-import org.elasticsearch.search.sort.SortBuilders;
 import org.elasticsearch.search.sort.SortOrder;
 import org.sensorhub.api.common.SensorHubException;
-import org.sensorhub.api.persistence.DataKey;
-import org.sensorhub.api.persistence.IDataFilter;
-import org.sensorhub.api.persistence.IDataRecord;
-import org.sensorhub.api.persistence.IObsStorage;
-import org.sensorhub.api.persistence.IRecordStorageModule;
-import org.sensorhub.api.persistence.IRecordStoreInfo;
-import org.sensorhub.api.persistence.IStorageModule;
-import org.sensorhub.api.persistence.StorageException;
+import org.sensorhub.api.persistence.*;
 import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,6 +67,9 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * <p>
@@ -113,6 +102,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	protected static final String RS_KEY_SEPARATOR = "##";
 
 	protected static final String BLOB_FIELD_NAME = "blob";
+
+	private static final int WAIT_TIME_AFTER_COMMIT = 1000;
+	private long storeChanged = 0;
 
     private Map<String, EsRecordStoreInfo> recordStoreCache = new HashMap<>();
 
@@ -171,6 +163,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public void commit() {
 		refreshIndex();
+        // https://www.elastic.co/guide/en/elasticsearch/guide/current/near-real-time.html
+        // document changes are not visible to search immediately, but will become visible within 1 second.
+        long now = System.currentTimeMillis();
+        if(now - storeChanged < WAIT_TIME_AFTER_COMMIT) {
+            try {
+                Thread.sleep(WAIT_TIME_AFTER_COMMIT);
+            } catch (InterruptedException ignored) {
+            }
+        }
 	}
 
 	@Override
@@ -587,6 +588,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             } catch (IOException ex) {
                 logger.error("Cannot create metadata mapping", ex);
             }
+
+            storeChanged = System.currentTimeMillis();
 
             refreshIndex();
 
@@ -1115,29 +1118,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
 
 
+        storeChanged = System.currentTimeMillis();
 
-//        // build the key as recordTYpe_timestamp_producerID
-//        String esKey = getRsKey(key);
-//
-//        // get blob from dataBlock object using serializer
-//        Object blob = this.getBlob(data);
-//
-//        Map<String, Object> json = new HashMap<>();
-//        json.put(TIMESTAMP_FIELD_NAME,key.timeStamp); // store timestamp
-//        json.put(PRODUCER_ID_FIELD_NAME,key.producerID); // store producerID
-//        json.put(RECORD_TYPE_FIELD_NAME,key.recordType); // store recordType
-//        json.put(BLOB_FIELD_NAME,blob); // store DataBlock
-//
-//        // set id and blob before executing the request
-//		/*String id = client.prepareIndex(indexName,RS_DATA_IDX_NAME)
-//				.setId(esKey)
-//				.setSource(json)
-//				.get()
-//				.getId();*/
-//        bulkProcessor.add(client.prepareIndex(indexName,RS_DATA_IDX_NAME)
-//                .setId(esKey)
-//                .setSource(json).request());
-	}
+    }
 
 	@Override
 	public void updateRecord(DataKey key, DataBlock data) {
@@ -1212,6 +1195,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 Response response = client.getLowLevelClient().performRequest("POST", encodeEndPoint(info.indexName, "_delete_by_query"),Collections.EMPTY_MAP, entity);
                 String source = EntityUtils.toString(response.getEntity());
                 Map<String, Object> content = XContentHelper.convertToMap(XContentFactory.xContent(XContentType.JSON), source, true);
+
+
+                storeChanged = System.currentTimeMillis();
+
+                commit();
+
                 return ((Number)content.get("total")).intValue();
             }
         } catch (IOException ex) {
