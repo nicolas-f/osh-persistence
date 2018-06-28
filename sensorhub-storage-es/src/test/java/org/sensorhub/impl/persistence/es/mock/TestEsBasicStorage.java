@@ -14,7 +14,6 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
-import org.elasticsearch.action.delete.DeleteRequest;
 import org.junit.After;
 import org.junit.Before;
 import org.sensorhub.api.common.SensorHubException;
@@ -25,6 +24,7 @@ import org.sensorhub.test.persistence.AbstractTestBasicStorage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
@@ -64,7 +64,9 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		// Let the time to ES to write the data
     	// if some tests are not passed,  try to increase this value first!!
 		storage.commit();
-		
+		// https://www.elastic.co/guide/en/elasticsearch/guide/current/near-real-time.html
+		// document changes are not visible to search immediately, but will become visible within 1 second.
+		Thread.sleep(TimeUnit.SECONDS.toMillis(2));
 	}
 
 }

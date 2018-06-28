@@ -36,6 +36,7 @@ import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -613,14 +614,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
         if(info != null) {
             SearchRequest searchRequest = new SearchRequest(info.indexName);
-            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-            searchSourceBuilder.query(QueryBuilders.matchAllQuery());
-            searchSourceBuilder.size(0);
-            searchRequest.source(searchSourceBuilder);
+            searchRequest.source(new SearchSourceBuilder().size(0));
             try {
                 SearchResponse response = client.search(searchRequest);
                 try {
-                    return Math.toIntExact(response.getHits().totalHits);
+                    return Math.toIntExact(response.getHits().getTotalHits());
                 } catch (ArithmeticException ex) {
                     logger.error("Too many records");
                     return Integer.MAX_VALUE;
@@ -1094,7 +1092,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 }
                 builder.endObject();
 
-                IndexRequest request = new IndexRequest(info.getIndexName(), info.getIndexName(), getRsKey(key));
+                IndexRequest request = new IndexRequest(info.getIndexName(), info.name, getRsKey(key));
 
                 request.source(builder);
 
@@ -1339,6 +1337,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     }
 
     private static final class BulkListener implements BulkProcessor.Listener {
+	    Logger logger = LoggerFactory.getLogger(BulkListener.class);
+
         @Override
         public void beforeBulk(long executionId, BulkRequest request) {
 
@@ -1351,7 +1351,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         @Override
         public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-
+            logger.error("Exception while pushing data to ElasticSearch", failure);
         }
     }
 }
