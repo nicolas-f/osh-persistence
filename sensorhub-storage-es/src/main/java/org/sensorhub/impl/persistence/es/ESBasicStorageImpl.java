@@ -127,7 +127,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * It does not join the cluster, but simply gets one or more initial transport addresses and communicates 
 	 * with them in round robin fashion on each action (though most actions will probably be "two hop" operations).
 	 */
-	protected RestHighLevelClient client;
+	RestHighLevelClient client;
 
 	private BulkProcessor bulkProcessor;
 	
@@ -157,7 +157,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 		throw new UnsupportedOperationException("Backup");
 	}
 
-	@Override
+    public RestHighLevelClient getClient() {
+        return client;
+    }
+
+    @Override
 	public void restore(InputStream is) throws IOException {
 		throw new UnsupportedOperationException("Restore");
 	}
@@ -915,6 +919,87 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 
 
+	private void parseDataMapping(XContentBuilder builder, DataComponent dataComponent) throws IOException {
+        if (dataComponent instanceof SimpleComponent) {
+            switch (((SimpleComponent) dataComponent).getDataType()) {
+                case FLOAT:
+                    builder.startObject(dataComponent.getName());
+                    // While Quantity does not contain a precision information
+                    if(dataComponent instanceof HasUom && ((HasUom) dataComponent).getUom().getCode().toLowerCase().startsWith("db"))  {
+                        builder.field("type", "scaled_float");
+                        builder.field("index", false);
+                        builder.field("scaling_factor", 100);
+                    } else {
+                        builder.field("type", "float");
+                    }
+                    builder.endObject();
+                    break;
+                case DOUBLE:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "double");
+                    builder.endObject();
+                    break;
+                case SHORT:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "short");
+                    builder.endObject();
+                    break;
+                case USHORT:
+                case UINT:
+                case INT:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "integer");
+                    builder.endObject();
+                    break;
+                case ASCII_STRING:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "keyword");
+                    builder.endObject();
+                    break;
+                case UTF_STRING:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "text");
+                    builder.endObject();
+                    break;
+                case BOOLEAN:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "boolean");
+                    builder.endObject();
+                    break;
+                case ULONG:
+                case LONG:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "long");
+                    builder.endObject();
+                    break;
+                case UBYTE:
+                case BYTE:
+                    builder.startObject(dataComponent.getName());
+                    builder.field("type", "byte");
+                    builder.endObject();
+                    break;
+                default:
+                    logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+            }
+        } else if(dataComponent instanceof DataRecord) {
+            for(int i = 0; i < dataComponent.getComponentCount(); i++) {
+                DataComponent component = dataComponent.getComponent(i);
+                parseDataMapping(builder, component);
+            }
+        } else if(dataComponent instanceof DataArray){
+            builder.startObject(dataComponent.getName());
+            {
+                builder.field("type", "nested");
+                builder.field("dynamic", false);
+                builder.startObject("properties");
+                {
+                    parseDataMapping(builder, ((DataArray) dataComponent).getElementType());
+                }
+                builder.endObject();
+            }
+            builder.endObject();
+        }
+    }
 
     void createDataMapping(EsRecordStoreInfo rsInfo) throws IOException {
 
@@ -941,76 +1026,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                         builder.field("type", "long");
                     }
                     builder.endObject();
-
-
                     DataComponent dataComponent = rsInfo.getRecordDescription();
-                    for(int i = 0; i < dataComponent.getComponentCount(); i++) {
-                        DataComponent component = dataComponent.getComponent(i);
-                        if (component instanceof SimpleComponent) {
-                            switch (((SimpleComponent) component).getDataType()) {
-                                case FLOAT:
-                                    builder.startObject(component.getName());
-                                    // While Quantity does not contain a precision information
-                                    if(component instanceof HasUom && ((HasUom) component).getUom().getCode().toLowerCase().startsWith("db"))  {
-                                        builder.field("type", "scaled_float");
-                                        builder.field("index", false);
-                                        builder.field("scaling_factor", 100);
-                                    } else {
-                                        builder.field("type", "float");
-                                    }
-                                    builder.endObject();
-                                    break;
-                                case DOUBLE:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "double");
-                                    builder.endObject();
-                                    break;
-                                case SHORT:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "short");
-                                    builder.endObject();
-                                    break;
-                                case USHORT:
-                                case UINT:
-                                case INT:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "integer");
-                                    builder.endObject();
-                                    break;
-                                case ASCII_STRING:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "keyword");
-                                    builder.endObject();
-                                    break;
-                                case UTF_STRING:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "text");
-                                    builder.endObject();
-                                    break;
-                                case BOOLEAN:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "boolean");
-                                    builder.endObject();
-                                    break;
-                                case ULONG:
-                                case LONG:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "long");
-                                    builder.endObject();
-                                    break;
-                                case UBYTE:
-                                case BYTE:
-                                    builder.startObject(component.getName());
-                                    builder.field("type", "byte");
-                                    builder.endObject();
-                                    break;
-                                default:
-                                    logger.error("Unsupported type " + ((SimpleComponent) component).getDataType());
-                            }
-                        } else {
-                            logger.error("Unsupported type " + ((SimpleComponent) component).getDataType());
-                        }
-                    }
+                    parseDataMapping(builder, dataComponent);
                 }
                 builder.endObject();
             }

@@ -14,6 +14,7 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
+import org.elasticsearch.action.delete.DeleteRequest;
 import org.junit.After;
 import org.junit.Before;
 import org.sensorhub.api.common.SensorHubException;
@@ -45,7 +46,9 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		config.scrollFetchSize = 2000;
 		config.bulkConcurrentRequests = 0;
 		config.id = "junit_testesbasicstorage_" + UUID.randomUUID().toString();
-		
+		config.indexNamePrepend = config.id + "_data_";
+		config.indexNameMetaData = config.id + "_meta_";
+
 		storage = new ESBasicStorageImpl();
 		storage.init(config);
 		storage.start();
