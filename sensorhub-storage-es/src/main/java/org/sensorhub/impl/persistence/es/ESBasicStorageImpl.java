@@ -20,11 +20,15 @@ import net.opengis.gml.v32.TimePeriod;
 import net.opengis.sensorml.v20.AbstractProcess;
 import net.opengis.swe.v20.*;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
+import org.apache.http.entity.ContentType;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.nio.entity.NStringEntity;
+import org.apache.http.util.EntityUtils;
 import org.apache.lucene.analysis.query.QueryAutoStopWordAnalyzer;
 import org.apache.lucene.queryparser.surround.query.AndQuery;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -42,6 +46,7 @@ import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
@@ -49,9 +54,9 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.common.xcontent.*;
+import org.elasticsearch.common.xcontent.json.JsonXContent;
+import org.elasticsearch.common.xcontent.json.JsonXContentParser;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -72,13 +77,9 @@ import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.net.UnknownHostException;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -614,7 +615,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
         if(info != null) {
             SearchRequest searchRequest = new SearchRequest(info.indexName);
-            searchRequest.source(new SearchSourceBuilder().size(0));
+            searchRequest.source(new SearchSourceBuilder().size(0)
+                    .query(new BoolQueryBuilder()
+                            .must(new TermQueryBuilder(STORAGE_ID_FIELD_NAME, config.id))));
             try {
                 SearchResponse response = client.search(searchRequest);
                 try {
@@ -1024,6 +1027,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                         builder.field("type", "long");
                     }
                     builder.endObject();
+                    builder.startObject(STORAGE_ID_FIELD_NAME);
+                    {
+                        builder.field("type", "keyword");
+                    }
+                    builder.endObject();
                     DataComponent dataComponent = rsInfo.getRecordDescription();
                     parseDataMapping(builder, dataComponent);
                 }
@@ -1051,6 +1059,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 {
                     builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, key.producerID);
                     builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, ESDataStoreTemplate.toEpochMillisecond(key.timeStamp));
+                    builder.field(STORAGE_ID_FIELD_NAME, config.id);
                     DataComponent dataComponent = info.getRecordDescription();
                     for(int i = 0; i < dataComponent.getComponentCount(); i++) {
                         DataComponent component = dataComponent.getComponent(i);
@@ -1163,49 +1172,52 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 //		bulkProcessor.add(deleteRequest);
 	}
 
+	private static String encodeEndPoint(String... params) throws IOException {
+	    StringBuilder s = new StringBuilder();
+	    for(String param : params) {
+	        if(s.length() > 0) {
+	            s.append("/");
+            }
+            s.append(URLEncoder.encode(param, "UTF-8"));
+        }
+	    return s.toString();
+    }
+
 	@Override
 	public int removeRecords(IDataFilter filter) {
-        log.info("ESBasicStorageImpl:filter");
-	    return 0;
-//		double[] timeRange = getTimeRange(filter);
-//
-//		// MultiSearch API does not support scroll?!
-//		// prepare filter
-//		QueryBuilder timeStampRangeQuery = QueryBuilders.rangeQuery(TIMESTAMP_FIELD_NAME).from(timeRange[0]).to(timeRange[1]);
-//		QueryBuilder recordTypeQuery = QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, filter.getRecordType());
-//
-//		// aggregate queries
-//		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery()
-//				.must(timeStampRangeQuery);
-//
-//		// check if any producerIDs
-//		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-//		}
-//
-//		// build response
-//		SearchResponse scrollResp = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//		        .setScroll(new TimeValue(config.pingTimeout))
-//		        .setQuery(recordTypeQuery)
-//		        .setFetchSource(new String[]{}, new String[]{"*"}) // does not fetch source
-//		        .setPostFilter(filterQueryBuilder)
-//		        .setSize(config.scrollFetchSize).get(); //max of scrollFetchSize hits will be returned for each scroll
-//
-//		//Scroll until no hit are returned
-//		int nb = 0;
-//		do {
-//		    for (SearchHit hit : scrollResp.getHits().getHits()) {
-//		    	// prepare delete request
-//				DeleteRequest deleteRequest = new DeleteRequest(indexNamePrepend,RS_DATA_IDX_NAME, hit.getId());
-//				bulkProcessor.add(deleteRequest);
-//		    	nb++;
-//		    }
-//
-//		    scrollResp = client.prepareSearchScroll(scrollResp.getScrollId()).setScroll(new TimeValue(config.scrollMaxDuration)).execute().actionGet();
-//		} while(scrollResp.getHits().getHits().length != 0); // Zero hits mark the end of the scroll and the while loop.
-//
-//		log.info("[ES] Delete "+nb+" records from "+new Date((long)timeRange[0]*1000)+" to "+new Date((long)timeRange[1]*1000));
-//		return 0;
+		double[] timeRange = getTimeRange(filter);
+		try {
+            Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
+            EsRecordStoreInfo info = recordStoreInfoMap.get(filter.getRecordType());
+            if(info != null) {
+                // Delete by query, currently not supported by High Level Api
+
+                BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                        .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
+                                .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
+                                .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])));
+
+                // check if any producerIDs
+                if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
+                    query.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
+                }
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                XContentBuilder builder = XContentFactory.jsonBuilder(bos);
+                builder.startObject();
+                builder.rawField("query", new ByteArrayInputStream(query.toString().getBytes(StandardCharsets.UTF_8)), XContentType.JSON);
+                builder.endObject();
+                builder.flush();
+                String json = bos.toString("UTF-8");
+                HttpEntity entity = new NStringEntity(json, ContentType.APPLICATION_JSON);
+                Response response = client.getLowLevelClient().performRequest("POST", encodeEndPoint(info.indexName, "_delete_by_query"),Collections.EMPTY_MAP, entity);
+                String source = EntityUtils.toString(response.getEntity());
+                Map<String, Object> content = XContentHelper.convertToMap(XContentFactory.xContent(XContentType.JSON), source, true);
+                return ((Number)content.get("total")).intValue();
+            }
+        } catch (IOException ex) {
+		  log.error("Failed to removeRecords", ex);
+        }
+        return 0;
 	}
 
 	/**
