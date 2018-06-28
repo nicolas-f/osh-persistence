@@ -14,6 +14,7 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.junit.After;
 import org.junit.Before;
 import org.sensorhub.api.common.SensorHubException;
@@ -21,6 +22,7 @@ import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
 import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
 import org.sensorhub.test.persistence.AbstractTestBasicStorage;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -30,6 +32,8 @@ import java.util.concurrent.TimeUnit;
 public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageImpl> {
 
     protected static final String CLUSTER_NAME = "elasticsearch";
+
+    private static final boolean clean_index = true;
 
 	@Before
 	public void init() throws Exception {
@@ -44,10 +48,11 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 
 		config.nodeUrls = nodes;
 		config.scrollFetchSize = 2000;
+		config.timestampAsLong = true;
 		config.bulkConcurrentRequests = 0;
 		config.id = "junit_testesbasicstorage_" + UUID.randomUUID().toString();
-		config.indexNamePrepend = config.id + "_data_";
-		config.indexNameMetaData = config.id + "_meta_";
+		config.indexNamePrepend = "data_" + config.id + "_";
+		config.indexNameMetaData = "meta_" + config.id + "_";
 
 		storage = new ESBasicStorageImpl();
 		storage.init(config);
@@ -56,6 +61,16 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 
 	@After
 	public void after() throws SensorHubException {
+	    // Delete added index
+        storage.commit();
+        if(clean_index) {
+            DeleteIndexRequest request = new DeleteIndexRequest(storage.getAddedIndex().toArray(new String[storage.getAddedIndex().size()]));
+            try {
+                storage.getClient().indices().delete(request);
+            } catch (IOException ex) {
+                throw new SensorHubException(ex.getLocalizedMessage(), ex);
+            }
+        }
 		storage.stop();
 	}
 

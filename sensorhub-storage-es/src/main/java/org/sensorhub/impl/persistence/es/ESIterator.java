@@ -14,13 +14,18 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
+import java.io.IOException;
 import java.util.Iterator;
 
-import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchScrollRequest;
+import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.search.SearchHit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * <p>
@@ -32,15 +37,16 @@ import org.elasticsearch.search.SearchHit;
  */
 public class ESIterator implements Iterator<SearchHit>{
 
+	private static final Logger log = LoggerFactory.getLogger(ESIterator.class);
 	/**
 	 * Default scroll fetch size.
 	 */
-	private static final int DEFAULT_FETCH_SIZE = 10;
+	private static final TimeValue DEFAULT_SCROLL = TimeValue.timeValueMillis(6000);
 	
 	/**
 	 * The scroll search request.
 	 */
-	private SearchRequestBuilder scrollSearchResponse;
+	private SearchRequest scrollSearchResponse;
 	
 	/**
 	 * The scroll search response.
@@ -65,37 +71,49 @@ public class ESIterator implements Iterator<SearchHit>{
 	/**
 	 * The shared transport client.
 	 */
-	private AbstractClient client;
+	private RestHighLevelClient client;
 	
 	/**
 	 * The current fetch size.
 	 */
 	private int fetchSize;
+
+	private TimeValue scroll;
+
+	String scrollId;
+
+	boolean hasNext = false;
+
+
 	
 	/**
 	 * The total number of fetched hits since the first request.
 	 */
 	private long nbHits;
 	
-	public ESIterator(AbstractClient client,SearchRequestBuilder scrollSearchResponse,int fetchSize) {
-		this.fetchSize = fetchSize;
+	public ESIterator(RestHighLevelClient client, SearchRequest scrollSearchResponse, TimeValue scroll) {
+		this.scroll = scroll;
 		this.client = client;
 		this.scrollSearchResponse = scrollSearchResponse;
 		this.nbHits = 0;
 	}
 	
-	public ESIterator(AbstractClient client, SearchRequestBuilder scrollSearchResponse) {
-		this(client,scrollSearchResponse,DEFAULT_FETCH_SIZE);
+	public ESIterator(RestHighLevelClient client, SearchRequest scrollSearchResponse) {
+		this(client, scrollSearchResponse, DEFAULT_SCROLL);
 	}
 
 	/**
 	 * Inits the scroll response and gets the current iterator.
 	 */
 	private void init() {
-		// init response
-		// override the size to keep the size consistent
-		scrollResp = scrollSearchResponse.setSize(this.fetchSize).get();
-		
+		try {
+			scrollResp = client.search(scrollSearchResponse);
+			scrollId = scrollResp.getScrollId();
+		} catch (IOException ex) {
+			log.error(ex.getLocalizedMessage(), ex);
+		}
+		hasNext = scrollResp.getHits().getHits().length > 0;
+
 		// get totalHits
 		totalHits = scrollResp.getHits().getTotalHits();
 		
@@ -105,7 +123,7 @@ public class ESIterator implements Iterator<SearchHit>{
 
 	@Override
 	public void remove() {
-
+		throw new UnsupportedOperationException();
 	}
 
 	/**
@@ -125,10 +143,17 @@ public class ESIterator implements Iterator<SearchHit>{
 	 */
 	private void makeNewScrollRequest() {
 		// build and execute the next scroll request
-		scrollResp = client.prepareSearchScroll(scrollResp.getScrollId())
-	    		.setScroll(new TimeValue(6000))
-	    		.execute()
-	    		.actionGet();
+		try {
+			SearchScrollRequest scrollRequest = new SearchScrollRequest(scrollId);
+			scrollRequest.scroll(scroll);
+			scrollResp = client.searchScroll(scrollRequest);
+
+			hasNext = scrollResp.getHits().getHits().length > 0;
+		} catch (IOException ex) {
+			log.error(ex.getLocalizedMessage(), ex);
+		}
+
+		scrollId = scrollResp.getScrollId();
 		
 		// re-init the search iterator
 		searchHitIterator = scrollResp.getHits().iterator();
@@ -148,7 +173,7 @@ public class ESIterator implements Iterator<SearchHit>{
 		
 		// if we have to make a new request
 		// we compare the number of current fetched hit to the allowed fetch size
-		if(currentNbFetch >= fetchSize) {
+		if(!searchHitIterator.hasNext()) {
 			makeNewScrollRequest();
 		}
 		return hit;

@@ -33,6 +33,9 @@ import org.sensorhub.api.config.DisplayInfo.Required;
 public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStorageConfig {
 
 	public static final String DEFAULT_INDEX_NAME_METADATA = "osh_meta_record_store";
+
+	// Enabled in unit test because there is an issue with date timestamps < 1 second
+	public boolean timestampAsLong = false;
 	
     @Required
     @DisplayInfo(desc="ES cluster name")

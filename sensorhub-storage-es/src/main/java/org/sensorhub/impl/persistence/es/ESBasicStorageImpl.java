@@ -37,6 +37,9 @@ import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.delete.DeleteRequest;
+import org.elasticsearch.action.get.GetRequest;
+import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -62,8 +65,10 @@ import org.sensorhub.api.persistence.*;
 import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.vast.data.*;
 
 import java.io.*;
+import java.lang.Boolean;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -105,6 +110,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	private static final int WAIT_TIME_AFTER_COMMIT = 1000;
 	private long storeChanged = 0;
+
+	private List<String> addedIndex = new ArrayList<>();
 
     private Map<String, EsRecordStoreInfo> recordStoreCache = new HashMap<>();
 
@@ -296,6 +303,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	    indexRequest.mapping(INDEX_METADATA_TYPE, builder);
 
 	    client.indices().create(indexRequest);
+
+        addedIndex.add(indexNameMetaData);
 	}
 
     @Override
@@ -614,6 +623,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public int getNumRecords(String recordType) {
+	    commit();
+
         Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
         EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
         if(info != null) {
@@ -741,25 +752,69 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 //		};
 	}
 
+	DataBlock dataBlockFromES(DataComponent component, Map data) {
+        DataBlock dataBlock = component.createDataBlock();
+        for (int i = 0; i < component.getComponentCount(); i++) {
+            DataComponent dataComponent = component.getComponent(i);
+            switch (((SimpleComponent) dataComponent).getDataType()) {
+                case FLOAT:
+                    dataBlock.setFloatValue(i, ((Number)data.get(dataComponent.getName())).floatValue());
+                    break;
+                case DOUBLE:
+                    dataBlock.setDoubleValue(i, ((Number)data.get(dataComponent.getName())).doubleValue());
+                    break;
+                case SHORT:
+                case USHORT:
+                case UINT:
+                case INT:
+                    dataBlock.setIntValue(i, ((Number)data.get(dataComponent.getName())).intValue());
+                    break;
+                case ASCII_STRING:
+                case UTF_STRING:
+                    dataBlock.setStringValue(i, (String)data.get(dataComponent.getName()));
+                    break;
+                case BOOLEAN:
+                    dataBlock.setBooleanValue(i, (Boolean) data.get(dataComponent.getName()));
+                    break;
+                case ULONG:
+                case LONG:
+                    dataBlock.setLongValue(i,((Number)data.get(dataComponent.getName())).longValue());
+                    break;
+                case UBYTE:
+                case BYTE:
+                    dataBlock.setByteValue(i, ((Number)data.get(dataComponent.getName())).byteValue());
+                    break;
+                default:
+                    logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+            }
+        }
+        return dataBlock;
+    }
+
 	@Override
 	public DataBlock getDataBlock(DataKey key) {
-        log.info("ESBasicStorageImpl:getDataBlock");
-	    return null;
-//		DataBlock result = null;
-//		// build the key as recordTYpe_timestamp_producerID
-//		String esKey = getRsKey(key);
-//
-//		// build the request
-//		GetRequest getRequest = new GetRequest(indexNamePrepend,RS_DATA_IDX_NAME,esKey);
-//
-//		// build  and execute the response
-//		GetResponse response = client.get(getRequest).actionGet();
-//
-//		// deserialize the blob field from the response if any
-//		if(response.isExists()) {
-//			result = this.<DataBlock>getObject(response.getSource().get(BLOB_FIELD_NAME)); // DataBlock
-//		}
-//		return result;
+        DataBlock result = null;
+        Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(key.recordType);
+        if(info != null) {
+            // build the key as recordTYpe_timestamp_producerID
+            String esKey = getRsKey(key);
+
+            // build the request
+            GetRequest getRequest = new GetRequest(info.indexName, info.name, esKey);
+            try {
+                // build  and execute the response
+                GetResponse response = client.get(getRequest);
+
+                // deserialize the blob field from the response if any
+                if (response.isExists()) {
+                    result = dataBlockFromES(info.recordDescription, response.getSourceAsMap());
+                }
+            } catch (IOException ex) {
+                log.error(ex.getLocalizedMessage(), ex);
+            }
+        }
+		return result;
 	}
 
 	@Override
@@ -820,105 +875,82 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	
 	@Override
 	public Iterator<? extends IDataRecord> getRecordIterator(IDataFilter filter) {
-        log.info("ESBasicStorageImpl:getRecordIterator");
-	    return null;
-//		double[] timeRange = getTimeRange(filter);
-//
-//		// prepare filter
-//		QueryBuilder timeStampRangeQuery = QueryBuilders.rangeQuery(TIMESTAMP_FIELD_NAME).from(timeRange[0]).to(timeRange[1]);
-//		QueryBuilder recordTypeQuery = QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, filter.getRecordType());
-//
-//		// aggregate queries
-//		BoolQueryBuilder queryBuilder = QueryBuilders.boolQuery()
-//				.must(timeStampRangeQuery)
-//				.must(recordTypeQuery);
-//
-//		// check if any producerIDs
-//		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-//			queryBuilder.must(QueryBuilders.termsQuery(PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-//		}
-//
-//		// build response
-//		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//				.addSort(TIMESTAMP_FIELD_NAME, SortOrder.ASC)
-//		        .setScroll(new TimeValue(config.pingTimeout))
-//		        .setQuery(recordTypeQuery)
-//		        //.setRequestCache(true)
-//		        .setPostFilter(queryBuilder);
-//
-//        // wrap the request into custom ES Scroll iterator
-//		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, scrollReq,
-//				config.scrollFetchSize); //max of scrollFetchSize hits will be returned for each scroll
-//
-//		// build a datablock iterator based on the searchHits iterator
-//
-//		return new Iterator<IDataRecord>(){
-//
-//			@Override
-//			public boolean hasNext() {
-//				return searchHitsIterator.hasNext();
-//			}
-//
-//			@Override
-//			public void remove() {
-//
-//			}
-//
-//			@Override
-//			public IDataRecord next() {
-//				SearchHit nextSearchHit = searchHitsIterator.next();
-//
-//				// build key
-//				final DataKey key = getDataKey(nextSearchHit.getId());
-//				key.timeStamp = (double) nextSearchHit.getSourceAsMap().get(TIMESTAMP_FIELD_NAME);
-//				// get DataBlock from blob
-//				final DataBlock datablock=ESBasicStorageImpl.this.<DataBlock>getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME)); // DataBlock
-//				return new IDataRecord(){
-//
-//					@Override
-//					public DataKey getKey() {
-//						return key;
-//					}
-//
-//					@Override
-//					public DataBlock getData() {
-//						return datablock;
-//					}
-//
-//				};
-//			}
-//		};
+        Map<String, EsRecordStoreInfo> recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(filter.getRecordType());
+        if (info != null) {
+            SearchRequest searchRequest = new SearchRequest(info.indexName);
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+            searchSourceBuilder.query(queryByFilter(filter));
+            searchSourceBuilder.size(config.scrollFetchSize);
+            searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
+            searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
+
+            final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
+
+            // build a datablock iterator based on the searchHits iterator
+
+            return new Iterator<IDataRecord>(){
+
+                @Override
+                public boolean hasNext() {
+                    return searchHitsIterator.hasNext();
+                }
+
+                @Override
+                public void remove() {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public IDataRecord next() {
+                    SearchHit nextSearchHit = searchHitsIterator.next();
+
+                    // build key
+                    final DataKey key = getDataKey(nextSearchHit.getId());
+
+                    final DataBlock datablock=dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap());
+
+                    return new IDataRecord(){
+
+                        @Override
+                        public DataKey getKey() {
+                            return key;
+                        }
+
+                        @Override
+                        public DataBlock getData() {
+                            return datablock;
+                        }
+
+                    };
+                }
+            };
+        }
+        return Collections.emptyIterator();
 	}
 	
 	@Override
 	public int getNumMatchingRecords(IDataFilter filter, long maxCount) {
-        log.info("ESBasicStorageImpl:getNumMatchingRecords");
-	    return 0;
-//		double[] timeRange = getTimeRange(filter);
-//
-//		// aggregate queries
-//		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
-//
-//		// prepare filter
-//		QueryBuilder timeStampRangeQuery = QueryBuilders.rangeQuery(TIMESTAMP_FIELD_NAME).from(timeRange[0]).to(timeRange[1]);
-//		QueryBuilder recordTypeQuery = QueryBuilders.termQuery(RECORD_TYPE_FIELD_NAME, filter.getRecordType());
-//
-//		filterQueryBuilder.must(timeStampRangeQuery);
-//
-//		// check if any producerIDs
-//		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-//		}
-//
-//		// build response
-//		final SearchResponse scrollResp = client.prepareSearch(indexNamePrepend).setTypes(RS_DATA_IDX_NAME)
-//		        .setScroll(new TimeValue(config.pingTimeout))
-//		        .setQuery(recordTypeQuery)
-//		        .setRequestCache(true)
-//		        .setPostFilter(filterQueryBuilder)
-//		        .setFetchSource(new String[]{}, new String[]{"*"}) // does not fetch source
-//		        .setSize(config.scrollFetchSize).get(); //max of scrollFetchSize hits will be returned for each scroll
-//		return (int) scrollResp.getHits().getTotalHits();
+        int result = 0;
+        Map<String, EsRecordStoreInfo> recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(filter.getRecordType());
+        if (info != null) {
+            SearchRequest searchRequest = new SearchRequest(info.indexName);
+            searchRequest.source(new SearchSourceBuilder().size(0)
+                    .query(queryByFilter(filter)));
+            try {
+                SearchResponse response = client.search(searchRequest);
+                try {
+                    return Math.toIntExact(Math.min(response.getHits().getTotalHits(), maxCount));
+                } catch (ArithmeticException ex) {
+                    logger.error("Too many records");
+                    return Integer.MAX_VALUE;
+                }
+            } catch (IOException | ElasticsearchStatusException ex) {
+                log.error("getRecordStores failed", ex);
+            }
+        }
+        return result;
 	}
 
 
@@ -1026,8 +1058,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
                     {
                         // Issue with date https://discuss.elastic.co/t/weird-issue-with-date-sort/137646
-                        //builder.field("type", "date");
-                        builder.field("type", "long");
+                        builder.field("type", config.timestampAsLong ? "long" : "date");
                     }
                     builder.endObject();
                     builder.startObject(STORAGE_ID_FIELD_NAME);
@@ -1047,10 +1078,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         indexRequest.mapping(rsInfo.name, builder);
 
         client.indices().create(indexRequest);
+
+        addedIndex.add(rsInfo.indexName);
     }
 
+    public List<String> getAddedIndex() {
+        return Collections.unmodifiableList(addedIndex);
+    }
 
-	@Override
+    @Override
 	public void storeRecord(DataKey key, DataBlock data) {
         try {
             Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
@@ -1146,13 +1182,16 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void removeRecord(DataKey key) {
-        log.info("ESBasicStorageImpl:key");
-//		// build the key as recordTYpe_timestamp_producerID
-//		String esKey = getRsKey(key);
-//
-//		// prepare delete request
-//		DeleteRequest deleteRequest = new DeleteRequest(indexNamePrepend, RS_DATA_IDX_NAME, esKey);
-//		bulkProcessor.add(deleteRequest);
+        Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
+        EsRecordStoreInfo info = recordStoreInfoMap.get(key.recordType);
+        if(info != null) {
+            // build the key as recordTYpe_timestamp_producerID
+            String esKey = getRsKey(key);
+
+            // prepare delete request
+            DeleteRequest deleteRequest = new DeleteRequest(info.indexName, info.name, esKey);
+            bulkProcessor.add(deleteRequest);
+        }
 	}
 
 	private static String encodeEndPoint(String... params) throws IOException {
@@ -1166,24 +1205,37 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	    return s.toString();
     }
 
+    /**
+     * Convert OSH filter to ElasticSearch filter
+     * @param filter OSH filter
+     * @return ElasticSearch query object
+     */
+    BoolQueryBuilder queryByFilter(IDataFilter filter) {
+        double[] timeRange = getTimeRange(filter);
+
+        BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
+                        .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
+                        .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])));
+
+        // check if any producerIDs
+        if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
+            query.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
+        }
+
+        return query;
+    }
+
 	@Override
 	public int removeRecords(IDataFilter filter) {
-		double[] timeRange = getTimeRange(filter);
 		try {
             Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
             EsRecordStoreInfo info = recordStoreInfoMap.get(filter.getRecordType());
             if(info != null) {
                 // Delete by query, currently not supported by High Level Api
 
-                BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
-                        .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                                .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
-                                .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])));
+                BoolQueryBuilder query = queryByFilter(filter);
 
-                // check if any producerIDs
-                if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-                    query.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-                }
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 XContentBuilder builder = XContentFactory.jsonBuilder(bos);
                 builder.startObject();
@@ -1196,10 +1248,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 String source = EntityUtils.toString(response.getEntity());
                 Map<String, Object> content = XContentHelper.convertToMap(XContentFactory.xContent(XContentType.JSON), source, true);
 
-
                 storeChanged = System.currentTimeMillis();
-
-                commit();
 
                 return ((Number)content.get("total")).intValue();
             }
@@ -1286,7 +1335,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	protected void refreshIndex() {
         log.info("ESBasicStorageImpl:refreshIndex");
         bulkProcessor.flush();
-        RefreshRequest refreshRequest = new RefreshRequest(indexNameMetaData);
+        RefreshRequest refreshRequest = new RefreshRequest();
         try {
             client.indices().refresh(refreshRequest);
         } catch (IOException ex) {
