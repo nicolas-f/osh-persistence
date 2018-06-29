@@ -50,7 +50,7 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		config.scrollFetchSize = 2000;
 		config.timestampAsLong = true;
 		config.bulkConcurrentRequests = 0;
-		config.id = "junit_testesbasicstorage_" + UUID.randomUUID().toString();
+		config.id = "junit_testesbasicstorage_" + System.currentTimeMillis();
 		config.indexNamePrepend = "data_" + config.id + "_";
 		config.indexNameMetaData = "meta_" + config.id + "_";
 

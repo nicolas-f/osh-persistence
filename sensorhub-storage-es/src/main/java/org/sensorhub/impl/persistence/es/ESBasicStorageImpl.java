@@ -752,40 +752,49 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 //		};
 	}
 
+	void dataSimpleComponent(SimpleComponent dataComponent, Map data,int i, DataBlock dataBlock) {
+        switch (dataComponent.getDataType()) {
+            case FLOAT:
+                dataBlock.setFloatValue(i, ((Number)data.get(dataComponent.getName())).floatValue());
+                break;
+            case DOUBLE:
+                dataBlock.setDoubleValue(i, ((Number)data.get(dataComponent.getName())).doubleValue());
+                break;
+            case SHORT:
+            case USHORT:
+            case UINT:
+            case INT:
+                dataBlock.setIntValue(i, ((Number)data.get(dataComponent.getName())).intValue());
+                break;
+            case ASCII_STRING:
+            case UTF_STRING:
+                dataBlock.setStringValue(i, (String)data.get(dataComponent.getName()));
+                break;
+            case BOOLEAN:
+                dataBlock.setBooleanValue(i, (Boolean) data.get(dataComponent.getName()));
+                break;
+            case ULONG:
+            case LONG:
+                dataBlock.setLongValue(i,((Number)data.get(dataComponent.getName())).longValue());
+                break;
+            case UBYTE:
+            case BYTE:
+                dataBlock.setByteValue(i, ((Number)data.get(dataComponent.getName())).byteValue());
+                break;
+            default:
+                logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+        }
+    }
+
 	DataBlock dataBlockFromES(DataComponent component, Map data) {
         DataBlock dataBlock = component.createDataBlock();
-        for (int i = 0; i < component.getComponentCount(); i++) {
-            DataComponent dataComponent = component.getComponent(i);
-            switch (((SimpleComponent) dataComponent).getDataType()) {
-                case FLOAT:
-                    dataBlock.setFloatValue(i, ((Number)data.get(dataComponent.getName())).floatValue());
-                    break;
-                case DOUBLE:
-                    dataBlock.setDoubleValue(i, ((Number)data.get(dataComponent.getName())).doubleValue());
-                    break;
-                case SHORT:
-                case USHORT:
-                case UINT:
-                case INT:
-                    dataBlock.setIntValue(i, ((Number)data.get(dataComponent.getName())).intValue());
-                    break;
-                case ASCII_STRING:
-                case UTF_STRING:
-                    dataBlock.setStringValue(i, (String)data.get(dataComponent.getName()));
-                    break;
-                case BOOLEAN:
-                    dataBlock.setBooleanValue(i, (Boolean) data.get(dataComponent.getName()));
-                    break;
-                case ULONG:
-                case LONG:
-                    dataBlock.setLongValue(i,((Number)data.get(dataComponent.getName())).longValue());
-                    break;
-                case UBYTE:
-                case BYTE:
-                    dataBlock.setByteValue(i, ((Number)data.get(dataComponent.getName())).byteValue());
-                    break;
-                default:
-                    logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+        if(component instanceof SimpleComponent) {
+            dataSimpleComponent((SimpleComponent) component, data, 0, dataBlock);
+        } else {
+            for (int i = 0; i < component.getComponentCount(); i++) {
+                if (component.getComponent(i) instanceof SimpleComponent) {
+                    dataSimpleComponent((SimpleComponent) component.getComponent(i), data, i, dataBlock);
+                }
             }
         }
         return dataBlock;
@@ -1087,6 +1096,70 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         return Collections.unmodifiableList(addedIndex);
     }
 
+    void dataComponentSimpleToJson(SimpleComponent component, DataBlock data, int i, XContentBuilder builder) throws IOException {
+        switch (data.getDataType(i)) {
+            case FLOAT:
+                builder.field(component.getName(), data.getFloatValue(i));
+                break;
+            case DOUBLE:
+                builder.field(component.getName(), data.getDoubleValue(i));
+                break;
+            case SHORT:
+            case USHORT:
+            case UINT:
+            case INT:
+                builder.field(component.getName(), data.getIntValue(i));
+                break;
+            case ASCII_STRING:
+            case UTF_STRING:
+                builder.field(component.getName(), data.getStringValue(i));
+                break;
+            case BOOLEAN:
+                builder.field(component.getName(), data.getBooleanValue(i));
+                break;
+            case ULONG:
+            case LONG:
+                builder.field(component.getName(), data.getLongValue(i));
+                break;
+            case UBYTE:
+            case BYTE:
+                builder.field(component.getName(), data.getByteValue(i));
+                break;
+            case OTHER:
+                builder.field(component.getName(), data.getUnderlyingObject());
+                break;
+            default:
+                logger.error("Unsupported type " + data.getDataType(i).name());
+        }
+    }
+
+    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, int nj, int j) throws IOException {
+        if(dataComponent instanceof SimpleComponent) {
+            dataComponentSimpleToJson((SimpleComponent) dataComponent, data, j, builder);
+        } else {
+            int compSize = dataComponent.getComponentCount();
+            DataType dataType = data.getDataType();
+            if(dataComponent instanceof DataArray) {
+                builder.startArray(dataComponent.getName());
+            }
+            for (int i = 0; i < compSize; i++) {
+                if (dataComponent.getComponent(i) instanceof SimpleComponent) {
+                    dataComponentSimpleToJson((SimpleComponent) dataComponent.getComponent(i), data, j*compSize + i, builder);
+                } else {
+                    builder.startObject();
+                    if(data instanceof DataBlockParallel) {
+                        dataComponentToJson(dataComponent.getComponent(i), data, builder, compSize, i);
+                    }
+                    builder.endObject();
+                }
+            }
+            if(dataComponent instanceof DataArray) {
+                builder.endArray();
+            }
+        }
+    }
+
+
     @Override
 	public void storeRecord(DataKey key, DataBlock data) {
         try {
@@ -1101,43 +1174,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, ESDataStoreTemplate.toEpochMillisecond(key.timeStamp));
                     builder.field(STORAGE_ID_FIELD_NAME, config.id);
                     DataComponent dataComponent = info.getRecordDescription();
-                    for(int i = 0; i < dataComponent.getComponentCount(); i++) {
-                        DataComponent component = dataComponent.getComponent(i);
-                        switch (data.getDataType(i)) {
-                            case FLOAT:
-                                builder.field(component.getName(), data.getFloatValue(i));
-                                break;
-                            case DOUBLE:
-                                builder.field(component.getName(), data.getDoubleValue(i));
-                                break;
-                            case SHORT:
-                            case USHORT:
-                            case UINT:
-                            case INT:
-                                builder.field(component.getName(), data.getIntValue(i));
-                                break;
-                            case ASCII_STRING:
-                            case UTF_STRING:
-                                builder.field(component.getName(), data.getStringValue(i));
-                                break;
-                            case BOOLEAN:
-                                builder.field(component.getName(), data.getBooleanValue(i));
-                                break;
-                            case ULONG:
-                            case LONG:
-                                builder.field(component.getName(), data.getLongValue(i));
-                                break;
-                            case UBYTE:
-                            case BYTE:
-                                builder.field(component.getName(), data.getByteValue(i));
-                                break;
-                            case OTHER:
-                                builder.field(component.getName(), data.getUnderlyingObject());
-                                break;
-                            default:
-                                logger.error("Unsupported type " + data.getDataType(i).name());
-                        }
-                    }
+                    dataComponentToJson(dataComponent, data, builder, 1, 0);
                 }
                 builder.endObject();
 
