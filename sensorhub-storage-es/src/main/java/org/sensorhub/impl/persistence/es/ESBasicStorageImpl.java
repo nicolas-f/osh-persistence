@@ -883,6 +883,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             searchSourceBuilder.query(queryByFilter(filter));
             searchSourceBuilder.size(config.scrollFetchSize);
             searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
+            searchRequest.source(searchSourceBuilder);
             searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
 
             final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
