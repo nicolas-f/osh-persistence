@@ -786,14 +786,19 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
-	DataBlock dataBlockFromES(DataComponent component, Map data) {
-        DataBlock dataBlock = component.createDataBlock();
+	DataBlock dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, int j) {
+	    if(dataBlock == null) {
+            dataBlock = component.createDataBlock();
+        }
         if(component instanceof SimpleComponent) {
             dataSimpleComponent((SimpleComponent) component, data, 0, dataBlock);
         } else {
-            for (int i = 0; i < component.getComponentCount(); i++) {
+	        final int arraySize = component.getComponentCount();
+            for (int i = 0; i < arraySize; i++) {
                 if (component.getComponent(i) instanceof SimpleComponent) {
-                    dataSimpleComponent((SimpleComponent) component.getComponent(i), data, i, dataBlock);
+                    dataSimpleComponent((SimpleComponent) component.getComponent(i), data,arraySize * j + i, dataBlock);
+                } else {
+                    dataBlockFromES(component.getComponent(i), (Map)((List)data.get(component.getComponent(i).getName())).get(i), dataBlock, i);
                 }
             }
         }
@@ -817,7 +822,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
                 // deserialize the blob field from the response if any
                 if (response.isExists()) {
-                    result = dataBlockFromES(info.recordDescription, response.getSourceAsMap());
+                    result = dataBlockFromES(info.recordDescription, response.getSourceAsMap(), null, 0);
                 }
             } catch (IOException ex) {
                 log.error(ex.getLocalizedMessage(), ex);
@@ -918,7 +923,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     // build key
                     final DataKey key = getDataKey(nextSearchHit.getId());
 
-                    final DataBlock datablock=dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap());
+                    final DataBlock datablock=dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap(), null, 0);
 
                     return new IDataRecord(){
 
@@ -1033,7 +1038,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 parseDataMapping(builder, component);
             }
         } else if(dataComponent instanceof DataArray){
-            builder.startObject(dataComponent.getName());
+            builder.startObject(((DataArray) dataComponent).getElementType().getName());
             {
                 builder.field("type", "nested");
                 builder.field("dynamic", false);
@@ -1138,9 +1143,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             dataComponentSimpleToJson((SimpleComponent) dataComponent, data, j, builder);
         } else {
             int compSize = dataComponent.getComponentCount();
-            DataType dataType = data.getDataType();
             if(dataComponent instanceof DataArray) {
-                builder.startArray(dataComponent.getName());
+                builder.startArray(((DataArray) dataComponent).getElementType().getName());
             }
             for (int i = 0; i < compSize; i++) {
                 if (dataComponent.getComponent(i) instanceof SimpleComponent) {
