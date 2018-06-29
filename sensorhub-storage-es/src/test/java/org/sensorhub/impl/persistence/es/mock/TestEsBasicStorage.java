@@ -47,7 +47,6 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 		nodes.add("localhost:9201");
 
 		config.nodeUrls = nodes;
-		config.scrollFetchSize = 2000;
 		config.timestampAsLong = true;
 		config.bulkConcurrentRequests = 0;
 		config.id = "junit_testesbasicstorage_" + System.currentTimeMillis();

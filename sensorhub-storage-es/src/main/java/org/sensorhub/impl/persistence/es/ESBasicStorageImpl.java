@@ -71,6 +71,7 @@ import java.io.*;
 import java.lang.Boolean;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -87,6 +88,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> implements IRecordStorageModule<ESBasicStorageConfig> {
 	private static final int TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE = 5000;
+
+	private static final long MIN_DATE_EPOCH = -62138538000000L;
+    private static final long MAX_DATE_EPOCH = 253336460400000L;
 
 	protected static final double MAX_TIME_CLUSTER_DELTA = 60.0;
 
@@ -344,6 +348,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         return result;
 	}
 
+	private static Date secondsToESDate(double time) {
+	    return new Date(Math.max(MIN_DATE_EPOCH, Math.min(MAX_DATE_EPOCH, ESDataStoreTemplate.toEpochMillisecond(time))));
+    }
+
 	@Override
 	public List<AbstractProcess> getDataSourceDescriptionHistory(double startTime, double endTime) {
         List<AbstractProcess> results = new ArrayList<>();
@@ -353,7 +361,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         QueryBuilder query = QueryBuilders.boolQuery()
                 .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME))
-                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(Double.valueOf(startTime * 1000).longValue()).to(Double.valueOf(endTime * 1000).longValue()));
+                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(secondsToESDate(startTime)).to(secondsToESDate(endTime)));
         searchSourceBuilder.query(query);
         searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
         searchSourceBuilder.size(config.scrollFetchSize);
@@ -415,13 +423,13 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         try {
             XContentBuilder builder = XContentFactory.jsonBuilder();
             // Convert to elastic search epoch millisecond
-            long epoch = Double.valueOf(time * 1000).longValue();
+            long epoch = ESDataStoreTemplate.toEpochMillisecond(time);
             builder.startObject();
             {
                 builder.field(STORAGE_ID_FIELD_NAME, config.id);
                 builder.field(METADATA_TYPE_FIELD_NAME, DESC_HISTORY_IDX_NAME);
                 builder.field(DATA_INDEX_FIELD_NAME, "");
-                builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, epoch);
+                builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, epoch);
                 builder.field(BLOB_FIELD_NAME, bytes);
             }
             builder.endObject();
@@ -975,14 +983,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             switch (((SimpleComponent) dataComponent).getDataType()) {
                 case FLOAT:
                     builder.startObject(dataComponent.getName());
-                    // While Quantity does not contain a precision information
-                    if(dataComponent instanceof HasUom && ((HasUom) dataComponent).getUom().getCode().toLowerCase().startsWith("db"))  {
-                        builder.field("type", "scaled_float");
-                        builder.field("index", false);
-                        builder.field("scaling_factor", 100);
-                    } else {
-                        builder.field("type", "float");
-                    }
+                    // TODO When Quantity will contains a precision information
+                    // builder.field("type", "scaled_float");
+                    // builder.field("index", false);
+                    // builder.field("scaling_factor", 100);
+                    builder.field("type", "float");
                     builder.endObject();
                     break;
                 case DOUBLE:
@@ -1255,10 +1260,16 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     BoolQueryBuilder queryByFilter(IDataFilter filter) {
         double[] timeRange = getTimeRange(filter);
 
+        Object from = secondsToESDate(timeRange[0]);
+        Object to = secondsToESDate(timeRange[1]);
+        if(config.timestampAsLong) {
+            from = ESDataStoreTemplate.toEpochMillisecond(timeRange[0]);
+            to = ESDataStoreTemplate.toEpochMillisecond(timeRange[1]);
+        }
         BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                 .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                        .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
-                        .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])));
+                        .from(from)
+                        .to(to));
 
         // check if any producerIDs
         if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
