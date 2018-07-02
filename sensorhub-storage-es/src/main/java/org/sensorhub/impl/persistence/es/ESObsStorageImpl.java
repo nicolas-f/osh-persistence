@@ -18,10 +18,13 @@ import java.io.IOException;
 import java.util.*;
 
 import com.vividsolutions.jts.io.WKTWriter;
+import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetRequestBuilder;
 import org.elasticsearch.action.get.GetResponse;
+import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
@@ -40,6 +43,8 @@ import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.join.query.JoinQueryBuilders;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.persistence.DataKey;
@@ -87,6 +92,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	protected static final String FOI_UNIQUE_ID_FIELD = "foiID";
 	protected static final String SHAPE_FIELD_NAME = "geom";
 	protected Bbox foiExtent = new Bbox();
+	protected static final String METADATA_TYPE_FOI = "foi";
 	
 	/**
 	 * Class logger
@@ -492,7 +498,66 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 	@Override
 	public synchronized Iterator<String> getFoiIDs(IFoiFilter filter) {
-		return new ArrayList<String>().iterator();
+
+		commit();
+
+		// build query
+		// aggregate queries
+		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
+
+		filterQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+
+		// filter on producer ids?
+		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
+			filterQueryBuilder.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
+		}
+
+		if(!filter.getFeatureIDs().isEmpty()) {
+			filterQueryBuilder.must(QueryBuilders.termsQuery("_id" ,filter.getFeatureIDs().toArray(new String[filter.getFeatureIDs().size()])));
+		}
+
+		// filter on roi?
+		if (filter.getRoi() != null) {
+			try {
+				// build geo query
+				filterQueryBuilder.must(getPolygonGeoQuery(filter.getRoi()));
+			} catch (IOException e) {
+				log.error(POLYGON_QUERY_ERROR_MSG, e);
+			}
+		}
+
+		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		searchSourceBuilder.query(filterQueryBuilder);
+		searchSourceBuilder.fetchSource(false);
+		searchSourceBuilder.size(config.scrollFetchSize);
+		searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
+		searchRequest.source(searchSourceBuilder);
+		searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
+
+		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
+
+		// build a IDataRecord iterator based on the searchHits iterator
+
+		return new Iterator<String>() {
+
+			@Override
+			public boolean hasNext() {
+				return searchHitsIterator.hasNext();
+			}
+
+			@Override
+			public void remove() {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public String next() {
+				SearchHit nextSearchHit = searchHitsIterator.next();
+
+				return nextSearchHit.getId();
+			}
+		};
 //
 //		// build query
 //		// aggregate queries
@@ -549,63 +614,65 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 	@Override
 	public synchronized Iterator<AbstractFeature> getFois(IFoiFilter filter) {
-		return new ArrayList<AbstractFeature>().iterator();
-//
-//		// build query
-//		// aggregate queries
-//		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
-//
-//		// filter on feature ids?
-//		if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(FOI_UNIQUE_ID_FIELD, filter.getFeatureIDs()));
-//		}
-//
-//		// filter on producer ids?
-//		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-//		}
-//
-//		// filter on roi?
-//		if (filter.getRoi() != null) {
-//			try {
-//				// build geo query
-//				filterQueryBuilder.must(getPolygonGeoQuery(filter.getRoi()));
-//			} catch (IOException e) {
-//				log.error(POLYGON_QUERY_ERROR_MSG, e);
-//			}
-//		}
-//
-//		// create scroll request
-//		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend)
-//				.setTypes("_doc")
-//				.setQuery(filterQueryBuilder)
-//				 // get only the blob
-//				.setFetchSource(new String[] { BLOB_FIELD_NAME }, new String[] {})
-//				.setScroll(new TimeValue(config.scrollMaxDuration));
-//
-//		// wrap the request into custom ES Scroll iterator
-//		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, scrollReq, config.scrollFetchSize);
-//
-//		return new Iterator<AbstractFeature>() {
-//
-//			@Override
-//			public boolean hasNext() {
-//				return searchHitsIterator.hasNext();
-//			}
-//
-//			@Override
-//			public void remove() {
-//
-//			}
-//
-//			@Override
-//			public AbstractFeature next() {
-//				SearchHit nextSearchHit = searchHitsIterator.next();
-//				// get Feature from blob
-//				return ESObsStorageImpl.this.<AbstractFeature>getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME));
-//			}
-//
-//		};
+
+		commit();
+
+		// build query
+		// aggregate queries
+		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
+
+		filterQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+
+		// filter on producer ids?
+		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
+			filterQueryBuilder.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
+		}
+
+		if(!filter.getFeatureIDs().isEmpty()) {
+			filterQueryBuilder.must(QueryBuilders.termsQuery("_id" ,filter.getFeatureIDs().toArray(new String[filter.getFeatureIDs().size()])));
+		}
+
+		// filter on roi?
+		if (filter.getRoi() != null) {
+			try {
+				// build geo query
+				filterQueryBuilder.must(getPolygonGeoQuery(filter.getRoi()));
+			} catch (IOException e) {
+				log.error(POLYGON_QUERY_ERROR_MSG, e);
+			}
+		}
+
+		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		searchSourceBuilder.query(filterQueryBuilder);
+		searchSourceBuilder.size(config.scrollFetchSize);
+		searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
+		searchRequest.source(searchSourceBuilder);
+		searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
+
+		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
+
+		// build a IDataRecord iterator based on the searchHits iterator
+
+		return new Iterator<AbstractFeature>() {
+
+			@Override
+			public boolean hasNext() {
+				return searchHitsIterator.hasNext();
+			}
+
+			@Override
+			public void remove() {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public AbstractFeature next() {
+				SearchHit nextSearchHit = searchHitsIterator.next();
+
+				return getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME));
+			}
+		};
 	}
 
 	@Override
@@ -792,36 +859,34 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	
 	@Override
 	public synchronized void storeFoi(String producerID, AbstractFeature foi) {
-//		// build the foi index requQueryBuilders.termsQuery("producerId", producerIds)QueryBuilders.termsQuery("producerId", producerIds)est
-//		IndexRequestBuilder foiIdxReq = client.prepareIndex(indexNamePrepend, "_doc");
-//
-//		AbstractGeometry geometry = foi.getLocation();
-//
-//		// build source
-//		Map<String, Object> json = new HashMap<>();
-//		json.put(FOI_UNIQUE_ID_FIELD, foi.getUniqueIdentifier());
-//		json.put(BLOB_FIELD_NAME, this.getBlob(foi)); // store AbstractFeature
-//		json.put(PRODUCER_ID_FIELD_NAME, producerID);
-//
-//		if(geometry != null) {
-//			try {
-//				// get shape builder from Geom
-//				ShapeBuilder shapeBuilder = getShapeBuilder(geometry);
-//				// store Shape builder
-//				json.put(SHAPE_FIELD_NAME, shapeBuilder);
-//
-//				// also update bounds
-//				foiExtent.add(GMLUtils.envelopeToBbox(geometry.getGeomEnvelope()));
-//				UpdateRequestBuilder boundsIdxReq = client.prepareUpdate(indexNamePrepend, "_doc", GEOBOUNDS_IDX_NAME);
-//				boundsIdxReq.setDoc(BLOB_FIELD_NAME, this.getBlob(foiExtent)).get();
-//
-//			} catch (SensorHubException e) {
-//				log.error("Cannot create shape builder",e);
-//			}
-//		}
-//
-//		// set source before executing the request
-//		String id = foiIdxReq.setSource(json).setId(foi.getUniqueIdentifier()).get().getId();
+		log.info("ESObsStorageImpl:storeFoi");
+
+		// add new record storage
+		byte[] bytes = this.getBlob(foi);
+
+		try {
+			XContentBuilder builder = XContentFactory.jsonBuilder();
+			builder.startObject();
+			{
+				// Convert to elastic search epoch millisecond
+				builder.field(STORAGE_ID_FIELD_NAME, config.id);
+				builder.field(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_FOI);
+				builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, producerID);
+				builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
+				builder.field(BLOB_FIELD_NAME, bytes);
+			}
+			builder.endObject();
+			IndexRequest request = new IndexRequest(indexNameMetaData, INDEX_METADATA_TYPE, foi.getUniqueIdentifier());
+
+			request.source(builder);
+
+			client.index(request);
+
+			storeChanged = System.currentTimeMillis();
+
+		} catch (IOException ex) {
+			logger.error(String.format("storeFoi exception %s:%s in elastic search driver",producerID, foi.getName()), ex);
+		}
 	}
 
 	/**

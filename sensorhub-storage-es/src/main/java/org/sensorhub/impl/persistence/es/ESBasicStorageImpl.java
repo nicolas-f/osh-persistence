@@ -111,7 +111,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	private static final int WAIT_TIME_AFTER_COMMIT = 1000;
 
 	// Last time the store has been changed, may require waiting if data changed since less than a second
-	private long storeChanged = 0;
+	long storeChanged = 0;
 
 	private List<String> addedIndex = new ArrayList<>();
 
@@ -263,7 +263,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         {
             builder.startObject(INDEX_METADATA_TYPE);
             {
-                builder.field("dynamic", false);
                 builder.startObject("properties");
                 {
                     builder.startObject(STORAGE_ID_FIELD_NAME);
@@ -277,6 +276,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     }
                     builder.endObject();
                     builder.startObject(DATA_INDEX_FIELD_NAME);
+                    {
+                        builder.field("type", "keyword");
+                    }
+                    builder.endObject();
+                    builder.startObject(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME);
                     {
                         builder.field("type", "keyword");
                     }

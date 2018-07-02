@@ -17,6 +17,7 @@ package org.sensorhub.impl.persistence.es;
 import java.io.IOException;
 import java.util.Iterator;
 
+import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
@@ -109,16 +110,18 @@ public class ESIterator implements Iterator<SearchHit>{
 		try {
 			scrollResp = client.search(scrollSearchResponse);
 			scrollId = scrollResp.getScrollId();
-		} catch (IOException ex) {
+
+			// get totalHits
+			totalHits = scrollResp.getHits().getTotalHits();
+
+			// init current iterator
+			searchHitIterator = scrollResp.getHits().iterator();
+
+		} catch (IOException |ElasticsearchStatusException ex) {
 			log.error(ex.getLocalizedMessage(), ex);
 		}
-		hasNext = scrollResp.getHits().getHits().length > 0;
 
-		// get totalHits
-		totalHits = scrollResp.getHits().getTotalHits();
-		
-		// init current iterator
-		searchHitIterator = scrollResp.getHits().iterator();
+		hasNext = scrollResp != null && scrollResp.getHits().getHits().length > 0;
 	}
 
 	@Override
