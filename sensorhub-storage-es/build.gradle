@@ -9,6 +9,11 @@ dependencies {
   compile 'org.sensorhub:sensorhub-core:' + oshCoreVersion
   compile 'org.elasticsearch.client:elasticsearch-rest-high-level-client:6.3.0'
   compile 'com.esotericsoftware:kryo:4.0.0'
+
+
+  compile "org.locationtech.spatial4j:spatial4j:0.7"
+  compile "org.locationtech.jts:jts-core:1.15.0"
+
   testCompile group:'org.sensorhub', name:'sensorhub-core', version:oshCoreVersion, configuration: 'testArtifacts'
 }
 

@@ -15,8 +15,10 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 package org.sensorhub.impl.persistence.es;
 
 import java.io.IOException;
+import java.text.ParseException;
 import java.util.*;
 
+import com.vividsolutions.jts.geom.*;
 import com.vividsolutions.jts.io.WKTWriter;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
 import org.elasticsearch.action.get.GetRequest;
@@ -28,6 +30,8 @@ import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.builders.CoordinatesBuilder;
 import org.elasticsearch.common.geo.builders.EnvelopeBuilder;
 import org.elasticsearch.common.geo.builders.PointBuilder;
@@ -38,6 +42,8 @@ import org.elasticsearch.common.geo.parsers.ShapeParser;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.*;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
+import org.elasticsearch.index.mapper.Mapper;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -46,6 +52,13 @@ import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
+import org.locationtech.spatial4j.context.SpatialContext;
+import org.locationtech.spatial4j.context.SpatialContextFactory;
+import org.locationtech.spatial4j.io.GeoJSONReader;
+import org.locationtech.spatial4j.io.jts.JtsGeoJSONWriter;
+import org.locationtech.spatial4j.shape.Shape;
+import org.locationtech.spatial4j.shape.jts.JtsGeometry;
+import org.locationtech.spatial4j.shape.jts.JtsShapeFactory;
 import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.persistence.DataKey;
 import org.sensorhub.api.persistence.IDataFilter;
@@ -60,11 +73,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.vast.ogc.gml.GMLUtils;
 import org.vast.util.Bbox;
-
-import com.vividsolutions.jts.geom.Coordinate;
-import com.vividsolutions.jts.geom.Envelope;
-import com.vividsolutions.jts.geom.Point;
-import com.vividsolutions.jts.geom.Polygon;
 
 import net.opengis.gml.v32.AbstractFeature;
 import net.opengis.gml.v32.AbstractGeometry;
@@ -90,7 +98,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	protected static final String FOI_IDX_NAME = "foi";
 	protected static final String GEOBOUNDS_IDX_NAME = "geobounds";
 	protected static final String FOI_UNIQUE_ID_FIELD = "foiID";
-	protected static final String SHAPE_FIELD_NAME = "geom";
+	protected static final String SHAPE_FIELD_NAME = "geometry";
 	protected Bbox foiExtent = new Bbox();
 	protected static final String METADATA_TYPE_FOI = "foi";
 	
@@ -497,6 +505,21 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	}
 
 	@Override
+	void createMetaMappingProperties(XContentBuilder builder) throws IOException {
+		builder.startObject(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME);
+		{
+			builder.field("type", "keyword");
+		}
+		builder.endObject();
+		builder.startObject(SHAPE_FIELD_NAME);
+		{
+			builder.field("type", "geo_shape");
+		}
+		builder.endObject();
+		super.createMetaMappingProperties(builder);
+	}
+
+	@Override
 	public synchronized Iterator<String> getFoiIDs(IFoiFilter filter) {
 
 		commit();
@@ -512,7 +535,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			filterQueryBuilder.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
 		}
 
-		if(!filter.getFeatureIDs().isEmpty()) {
+		if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
 			filterQueryBuilder.must(QueryBuilders.termsQuery("_id" ,filter.getFeatureIDs().toArray(new String[filter.getFeatureIDs().size()])));
 		}
 
@@ -529,7 +552,13 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
 		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
 		searchSourceBuilder.query(filterQueryBuilder);
-		searchSourceBuilder.fetchSource(false);
+		if(filter.getRoi() != null) {
+		    // ElasticSearch return false positive (only approximate bound box test)
+            // We have to check before returning values
+            searchSourceBuilder.fetchSource(SHAPE_FIELD_NAME, null);
+        } else {
+            searchSourceBuilder.fetchSource(false);
+        }
 		searchSourceBuilder.size(config.scrollFetchSize);
 		searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
 		searchRequest.source(searchSourceBuilder);
@@ -539,7 +568,10 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 		// build a IDataRecord iterator based on the searchHits iterator
 
+		final Shape geomTest = filter.getRoi() == null ? null : getPolygonBuilder(filter.getRoi()).build();
+
 		return new Iterator<String>() {
+
 
 			@Override
 			public boolean hasNext() {
@@ -554,6 +586,31 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			@Override
 			public String next() {
 				SearchHit nextSearchHit = searchHitsIterator.next();
+
+				if (geomTest != null) {
+					try {
+						do {
+							// Extract shape from the geometry field using ES shape parser
+								XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY,
+										LoggingDeprecationHandler.INSTANCE, new BytesArray(nextSearchHit.getSourceAsString()), XContentType.JSON);
+								parser.nextToken();
+								// Continue while we not found the geometry field
+								while (parser.currentToken() != XContentParser.Token.FIELD_NAME ||
+										!parser.currentName().equals(SHAPE_FIELD_NAME)) {
+									parser.nextToken();
+								}
+								parser.nextToken(); // Go into field content
+								ShapeBuilder shapeBuilder = ShapeParser.parse(parser);
+								Shape geom = shapeBuilder.build();
+								if (geom.relate(geomTest).intersects()) {
+									break;
+								}
+								nextSearchHit = searchHitsIterator.next();
+						} while (searchHitsIterator.hasNext());
+					} catch (Exception ex) {
+						log.error(ex.getLocalizedMessage(), ex);
+					}
+				}
 
 				return nextSearchHit.getId();
 			}
@@ -628,7 +685,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			filterQueryBuilder.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
 		}
 
-		if(!filter.getFeatureIDs().isEmpty()) {
+		if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
 			filterQueryBuilder.must(QueryBuilders.termsQuery("_id" ,filter.getFeatureIDs().toArray(new String[filter.getFeatureIDs().size()])));
 		}
 
@@ -871,6 +928,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 				// Convert to elastic search epoch millisecond
 				builder.field(STORAGE_ID_FIELD_NAME, config.id);
 				builder.field(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_FOI);
+				builder.field(SHAPE_FIELD_NAME, getShapeBuilder(foi.getLocation()));
 				builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, producerID);
 				builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
 				builder.field(BLOB_FIELD_NAME, bytes);
@@ -884,7 +942,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 			storeChanged = System.currentTimeMillis();
 
-		} catch (IOException ex) {
+		} catch (IOException | SensorHubException ex) {
 			logger.error(String.format("storeFoi exception %s:%s in elastic search driver",producerID, foi.getName()), ex);
 		}
 	}
@@ -945,29 +1003,29 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 //        }
     }
 
-//
-//	/**
-//     * Gets the envelope builder from a bbox object.
-//     * @param envelope the bbox
-//     * @returnthe Envelope builder
-//     */
-//    protected synchronized EnvelopeBuilder getEnvelopeBuilder(Bbox bbox) {
-//		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(bbox.getMinX(), bbox.getMaxY());
-//		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(bbox.getMaxX(), bbox.getMinY());
-//        return new EnvelopeBuilder(topLeft, btmRight);
-//    }
-//
-//	/**
-//	 * Gets the envelope builder from envelope geometry.
-//	 * @param env the envelope geometry
-//	 * @returnthe Envelope builder
-//	 */
-//	protected synchronized EnvelopeBuilder getEnvelopeBuilder(Envelope env) {
-//		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(env.getMinX(), env.getMaxY());
-//		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(env.getMaxX(), env.getMinY());
-//        return new EnvelopeBuilder(topLeft, btmRight);
-//	}
-//
+
+	/**
+     * Gets the envelope builder from a bbox object.
+     * @param bbox the bbox
+     * @returnthe Envelope builder
+     */
+    protected synchronized EnvelopeBuilder getEnvelopeBuilder(Bbox bbox) {
+		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(bbox.getMinX(), bbox.getMaxY());
+		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(bbox.getMaxX(), bbox.getMinY());
+        return new EnvelopeBuilder(topLeft, btmRight);
+    }
+
+	/**
+	 * Gets the envelope builder from envelope geometry.
+	 * @param env the envelope geometry
+	 * @returnthe Envelope builder
+	 */
+	protected synchronized EnvelopeBuilder getEnvelopeBuilder(Envelope env) {
+		org.locationtech.jts.geom.Coordinate topLeft = new org.locationtech.jts.geom.Coordinate(env.getMinX(), env.getMaxY());
+		org.locationtech.jts.geom.Coordinate btmRight = new org.locationtech.jts.geom.Coordinate(env.getMaxX(), env.getMinY());
+        return new EnvelopeBuilder(topLeft, btmRight);
+	}
+
 	/**
 	 * Build a polygon builder from a polygon geometry.
 	 * @param polygon the Polygon geometry
@@ -977,41 +1035,63 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		// get coordinates list from polygon
 		CoordinatesBuilder coordinates = new CoordinatesBuilder();
 		for(Coordinate coordinate : polygon.getExteriorRing().getCoordinates()) {
-			coordinates.coordinate(coordinate.x, coordinate.y);
+            double x = coordinate.x;
+            double y = coordinate.y;
+            // Handle out of bounds points
+            if(x < -180 || x > 180) {
+                x = -180 + x % 180;
+                log.warn("Point %f,%f out of bounds",x,y);
+            }
+            if(y < -90 || y > 90) {
+                y = -90 + y % 90;
+                log.warn("Point %f,%f out of bounds",x,y);
+            }
+			coordinates.coordinate(x, y);
 		}
 		// build shape builder from coordinates
 		return new PolygonBuilder(coordinates);
 		//.relation(ShapeRelation.WITHIN); strategy, Default is INTERSECT
 	}
-//
-//	/**
-//	 * Build a point builder from a point geometry.
-//	 * @param point the Point geometry
-//	 * @return the builder
-//	 */
-//	protected synchronized PointBuilder getPointBuilder(Point point) {
-//		// build shape builder from coordinates
-//		return new PointBuilder(point.getX(), point.getY());
-//	}
-//
-//	/**
-//	 * Build the corresponding builder given a generic geometry.
-//	 * @param geometry The abstract geometry
-//	 * @return the corresponding builder. The current supported builder are: PolygonJTS, Point, EnvelopeJTS
-//	 * @throws SensorHubException if the geometry is not supported
-//	 */
-//	protected synchronized ShapeBuilder getShapeBuilder(AbstractGeometry geometry) throws SensorHubException {
-//		if(geometry instanceof PolygonJTS) {
-//			return getPolygonBuilder((PolygonJTS)geometry);
-//		} else if(geometry instanceof PointJTS) {
-//			return getPointBuilder((PointJTS)geometry);
-//		} else if(geometry instanceof EnvelopeJTS) {
-//			return getEnvelopeBuilder((Envelope)geometry);
-//		} else {
-//			throw new SensorHubException("Unsupported Geometry exception: "+geometry.getClass());
-//		}
-//	}
-//
+
+	/**
+	 * Build a point builder from a point geometry.
+	 * @param point the Point geometry
+	 * @return the builder
+	 */
+	protected synchronized PointBuilder getPointBuilder(Point point) {
+		// build shape builder from coordinates
+        double x = point.getX();
+        double y = point.getY();
+        // Handle out of bounds points
+        if(x < -180 || x > 180) {
+            x = -180 + x % 180;
+            log.warn("Point %f,%f out of bounds",x,y);
+        }
+        if(y < -90 || y > 90) {
+            y = -90 + y % 90;
+            log.warn("Point %f,%f out of bounds",x,y);
+        }
+		return new PointBuilder(x, y);
+	}
+
+	/**
+	 * Build the corresponding builder given a generic geometry.
+	 * @param geometry The abstract geometry
+	 * @return the corresponding builder. The current supported builder are: PolygonJTS, Point, EnvelopeJTS
+	 * @throws SensorHubException if the geometry is not supported
+	 */
+	protected synchronized ShapeBuilder getShapeBuilder(AbstractGeometry geometry) throws SensorHubException {
+		if(geometry instanceof PolygonJTS) {
+			return getPolygonBuilder((PolygonJTS)geometry);
+		} else if(geometry instanceof PointJTS) {
+			return getPointBuilder((PointJTS)geometry);
+		} else if(geometry instanceof EnvelopeJTS) {
+			return getEnvelopeBuilder((Envelope)geometry);
+		} else {
+			throw new SensorHubException("Unsupported Geometry exception: "+geometry.getClass());
+		}
+	}
+
 	/**
 	 * Build the geo shape query from a Polygon. The query will use a geo intersection query
 	 * @param polygon The geometry to build the query

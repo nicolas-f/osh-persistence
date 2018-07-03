@@ -254,6 +254,33 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
 	}
 
+	void createMetaMappingProperties(XContentBuilder builder) throws IOException {
+        builder.startObject(STORAGE_ID_FIELD_NAME);
+        {
+            builder.field("type", "keyword");
+        }
+        builder.endObject();
+        builder.startObject(METADATA_TYPE_FIELD_NAME);
+        {
+            builder.field("type", "keyword");
+        }
+        builder.endObject();
+        builder.startObject(DATA_INDEX_FIELD_NAME);
+        {
+            builder.field("type", "keyword");
+        }
+        builder.endObject();
+        builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
+        {
+            builder.field("type", "date");
+        }
+        builder.endObject();
+        builder.startObject(BLOB_FIELD_NAME);
+        {
+            builder.field("type", "binary");
+        }
+        builder.endObject();
+    }
 	void createMetaMapping () throws IOException {
 		// create the index
 	    CreateIndexRequest indexRequest = new CreateIndexRequest(indexNameMetaData);
@@ -265,36 +292,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             {
                 builder.startObject("properties");
                 {
-                    builder.startObject(STORAGE_ID_FIELD_NAME);
-                    {
-                        builder.field("type", "keyword");
-                    }
-                    builder.endObject();
-                    builder.startObject(METADATA_TYPE_FIELD_NAME);
-                    {
-                        builder.field("type", "keyword");
-                    }
-                    builder.endObject();
-                    builder.startObject(DATA_INDEX_FIELD_NAME);
-                    {
-                        builder.field("type", "keyword");
-                    }
-                    builder.endObject();
-                    builder.startObject(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME);
-                    {
-                        builder.field("type", "keyword");
-                    }
-                    builder.endObject();
-                    builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
-                    {
-                        builder.field("type", "date");
-                    }
-                    builder.endObject();
-                    builder.startObject(BLOB_FIELD_NAME);
-                    {
-                        builder.field("type", "binary");
-                    }
-                    builder.endObject();
+                    createMetaMappingProperties(builder);
                 }
                 builder.endObject();
             }
