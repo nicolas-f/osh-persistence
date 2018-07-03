@@ -1313,7 +1313,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * @param object The raw object
 	 * @return the serialized object
 	 */
-	protected <T> byte[] getBlob(T object){
+	protected static <T> byte[] getBlob(T object){
 		return KryoSerializer.serialize(object);
 	}
 
@@ -1323,7 +1323,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * @param blob The base64 encoding String
 	 * @return The deserialized object
 	 */
-	protected <T> T getObject(Object blob) {
+	protected static <T> T getObject(Object blob) {
 		// Base 64 decoding
 		byte [] base64decodedData = Base64.decodeBase64(blob.toString().getBytes());
 		// Kryo deserialize

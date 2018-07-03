@@ -519,7 +519,21 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		super.createMetaMappingProperties(builder);
 	}
 
-	@Override
+    static Shape parseResultSourceGeometry(String source) throws IOException {
+        XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY,
+                LoggingDeprecationHandler.INSTANCE, new BytesArray(source), XContentType.JSON);
+        parser.nextToken();
+        // Continue while we not found the geometry field
+        while (parser.currentToken() != XContentParser.Token.FIELD_NAME ||
+                !parser.currentName().equals(SHAPE_FIELD_NAME)) {
+            parser.nextToken();
+        }
+        parser.nextToken(); // Go into field content
+        ShapeBuilder shapeBuilder = ShapeParser.parse(parser);
+        return shapeBuilder.build();
+    }
+
+    @Override
 	public synchronized Iterator<String> getFoiIDs(IFoiFilter filter) {
 
 		commit();
@@ -564,56 +578,59 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		searchRequest.source(searchSourceBuilder);
 		searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
 
-		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
+		final ESIterator searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
 
 		// build a IDataRecord iterator based on the searchHits iterator
 
 		final Shape geomTest = filter.getRoi() == null ? null : getPolygonBuilder(filter.getRoi()).build();
 
 		return new Iterator<String>() {
+            String nextFeature = null;
 
+            @Override
+            public boolean hasNext() {
+                if(nextFeature == null && searchHitsIterator.hasNext()) {
+                    fetchNext();
+                }
+                return nextFeature != null;
+            }
 
-			@Override
-			public boolean hasNext() {
-				return searchHitsIterator.hasNext();
-			}
+            @Override
+            public void remove() {
+                throw new UnsupportedOperationException();
+            }
 
-			@Override
-			public void remove() {
-				throw new UnsupportedOperationException();
-			}
+            void fetchNext() {
+                nextFeature = null;
+                if(searchHitsIterator.hasNext()) {
+                    SearchHit nextSearchHit = searchHitsIterator.next();
+                    if (geomTest != null) {
+                        try {
+                            do {
+                                // Extract shape from the geometry field using ES shape parser
+                                Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+                                if (geom.relate(geomTest).intersects()) {
+                                    break;
+                                }
+                                if (!searchHitsIterator.hasNext()) {
+                                    return;
+                                }
+                                nextSearchHit = searchHitsIterator.next();
+                            } while (true);
+                        } catch (Exception ex) {
+                            log.error(ex.getLocalizedMessage(), ex);
+                        }
+                    }
+                    nextFeature = nextSearchHit.getId();
+                }
+            }
 
-			@Override
-			public String next() {
-				SearchHit nextSearchHit = searchHitsIterator.next();
-
-				if (geomTest != null) {
-					try {
-						do {
-							// Extract shape from the geometry field using ES shape parser
-								XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY,
-										LoggingDeprecationHandler.INSTANCE, new BytesArray(nextSearchHit.getSourceAsString()), XContentType.JSON);
-								parser.nextToken();
-								// Continue while we not found the geometry field
-								while (parser.currentToken() != XContentParser.Token.FIELD_NAME ||
-										!parser.currentName().equals(SHAPE_FIELD_NAME)) {
-									parser.nextToken();
-								}
-								parser.nextToken(); // Go into field content
-								ShapeBuilder shapeBuilder = ShapeParser.parse(parser);
-								Shape geom = shapeBuilder.build();
-								if (geom.relate(geomTest).intersects()) {
-									break;
-								}
-								nextSearchHit = searchHitsIterator.next();
-						} while (searchHitsIterator.hasNext());
-					} catch (Exception ex) {
-						log.error(ex.getLocalizedMessage(), ex);
-					}
-				}
-
-				return nextSearchHit.getId();
-			}
+            @Override
+            public String next() {
+                String ret = nextFeature;
+                fetchNext();
+                return ret;
+            }
 		};
 //
 //		// build query
@@ -699,6 +716,8 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 		}
 
+        final Shape geomTest = filter.getRoi() == null ? null : getPolygonBuilder(filter.getRoi()).build();
+
 		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
 		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
 		searchSourceBuilder.query(filterQueryBuilder);
@@ -707,29 +726,11 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		searchRequest.source(searchSourceBuilder);
 		searchRequest.scroll(TimeValue.timeValueMillis(config.scrollMaxDuration));
 
-		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
+		final ESIterator searchHitsIterator = new ESIterator(client, searchRequest, TimeValue.timeValueMillis(config.scrollMaxDuration)); //max of scrollFetchSize hits will be returned for each scroll
 
 		// build a IDataRecord iterator based on the searchHits iterator
 
-		return new Iterator<AbstractFeature>() {
-
-			@Override
-			public boolean hasNext() {
-				return searchHitsIterator.hasNext();
-			}
-
-			@Override
-			public void remove() {
-				throw new UnsupportedOperationException();
-			}
-
-			@Override
-			public AbstractFeature next() {
-				SearchHit nextSearchHit = searchHitsIterator.next();
-
-				return getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME));
-			}
-		};
+		return new AbstractFeatureIterator(searchHitsIterator, geomTest);
 	}
 
 	@Override
@@ -1102,4 +1103,61 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		return QueryBuilders.geoIntersectionQuery(SHAPE_FIELD_NAME,
 				getPolygonBuilder(polygon));
 	}
+
+	static final class AbstractFeatureIterator implements Iterator<AbstractFeature> {
+        ESIterator searchHitsIterator;
+        Shape geomTest;
+        AbstractFeature nextFeature = null;
+
+        public AbstractFeatureIterator(ESIterator searchHitsIterator, Shape geomTest) {
+            this.searchHitsIterator = searchHitsIterator;
+            this.geomTest = geomTest;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if(nextFeature == null && searchHitsIterator.hasNext()) {
+                fetchNext();
+            }
+            return nextFeature != null;
+        }
+
+        @Override
+        public void remove() {
+            throw new UnsupportedOperationException();
+        }
+
+        void fetchNext() {
+            nextFeature = null;
+            if(searchHitsIterator.hasNext()) {
+                SearchHit nextSearchHit = searchHitsIterator.next();
+                if (geomTest != null) {
+                    try {
+                        do {
+                            // Extract shape from the geometry field using ES shape parser
+                            Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+                            if (geom.relate(geomTest).intersects()) {
+                                break;
+                            }
+                            if (!searchHitsIterator.hasNext()) {
+                                return;
+                            }
+                            nextSearchHit = searchHitsIterator.next();
+                        } while (true);
+                    } catch (Exception ex) {
+                        log.error(ex.getLocalizedMessage(), ex);
+                    }
+                }
+                nextFeature = ESObsStorageImpl.getObject(nextSearchHit.getSourceAsMap().get(BLOB_FIELD_NAME));
+            }
+        }
+
+        @Override
+        public AbstractFeature next() {
+            AbstractFeature ret = nextFeature;
+            fetchNext();
+            return ret;
+        }
+
+    }
 }
