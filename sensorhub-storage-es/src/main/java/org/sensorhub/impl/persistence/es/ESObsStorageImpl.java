@@ -32,6 +32,7 @@ import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -53,6 +54,9 @@ import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.join.query.JoinQueryBuilders;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.metrics.geobounds.ParsedGeoBounds;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
@@ -494,20 +498,25 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 	@Override
 	public Bbox getFoisSpatialExtent() {
-		
-		// NOT WORKING because of https://github.com/elastic/elasticsearch/issues/7574
-	    /*final SearchRequestBuilder sReq = client.prepareSearch(indexNamePrepend)
-            .setTypes(RS_FOI_IDX_NAME)
-            .addAggregation(
-                AggregationBuilders.geoBounds("agg")
-                                   .field(SHAPE_FIELD_NAME)
-                                   .wrapLongitude(true)
-            );
-		
-		GeoBounds agg = sReq.get().getAggregations().get("agg");
-		GeoPoint tl = agg.topLeft();
-		GeoPoint br = agg.bottomRight();
-		return new Bbox(tl.lon(), br.lat(), br.lon(), tl.lat());*/
+	    SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+	    SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+	    searchSourceBuilder.query(QueryBuilders.boolQuery());
+        searchSourceBuilder.size(0);
+        searchSourceBuilder.aggregation(AggregationBuilders.geoBounds("agg").field(SHAPE_FIELD_NAME));
+	    searchRequest.source(searchSourceBuilder);
+	    try {
+            SearchResponse response = client.search(searchRequest);
+            Object obj = response.getAggregations().asMap().get("agg");
+            if(obj instanceof ParsedGeoBounds) {
+                ParsedGeoBounds geoBounds = (ParsedGeoBounds) obj;
+                foiExtent = new Bbox(geoBounds.topLeft().getLon(),
+                        geoBounds.bottomRight().getLat(),0,
+                        geoBounds.bottomRight().getLon(),
+                        geoBounds.topLeft().getLat(),0);
+            }
+        } catch (IOException ex) {
+	        log.error(ex.getLocalizedMessage(), ex);
+        }
 	    return foiExtent.copy();
 	}
 
