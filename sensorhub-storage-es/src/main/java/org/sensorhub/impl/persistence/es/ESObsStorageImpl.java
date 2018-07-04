@@ -18,7 +18,11 @@ import java.io.IOException;
 import java.text.ParseException;
 import java.util.*;
 
-import com.vividsolutions.jts.geom.*;
+import com.vividsolutions.jts.geom.Coordinate;
+import com.vividsolutions.jts.geom.Envelope;
+import com.vividsolutions.jts.geom.GeometryFactory;
+import com.vividsolutions.jts.geom.Point;
+import com.vividsolutions.jts.geom.Polygon;
 import com.vividsolutions.jts.io.WKTWriter;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
 import org.elasticsearch.action.get.GetRequest;
@@ -54,10 +58,12 @@ import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.locationtech.spatial4j.context.SpatialContextFactory;
+import org.locationtech.spatial4j.context.jts.JtsSpatialContext;
 import org.locationtech.spatial4j.io.GeoJSONReader;
 import org.locationtech.spatial4j.io.jts.JtsGeoJSONWriter;
 import org.locationtech.spatial4j.shape.Shape;
 import org.locationtech.spatial4j.shape.jts.JtsGeometry;
+import org.locationtech.spatial4j.shape.jts.JtsPoint;
 import org.locationtech.spatial4j.shape.jts.JtsShapeFactory;
 import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.persistence.DataKey;
@@ -101,6 +107,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	protected static final String SHAPE_FIELD_NAME = "geometry";
 	protected Bbox foiExtent = new Bbox();
 	protected static final String METADATA_TYPE_FOI = "foi";
+	private GeometryFactory geometryFactory = new GeometryFactory();
 	
 	/**
 	 * Class logger
@@ -513,7 +520,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		builder.endObject();
 		builder.startObject(SHAPE_FIELD_NAME);
 		{
-			builder.field("type", "geo_shape");
+			builder.field("type", "geo_point");
 		}
 		builder.endObject();
 		super.createMetaMappingProperties(builder);
@@ -586,6 +593,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 		return new Iterator<String>() {
             String nextFeature = null;
+            org.locationtech.jts.geom.GeometryFactory factory = new org.locationtech.jts.geom.GeometryFactory();
 
             @Override
             public boolean hasNext() {
@@ -608,7 +616,9 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
                         try {
                             do {
                                 // Extract shape from the geometry field using ES shape parser
-                                Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+                                //Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+                                Map pt = (Map)nextSearchHit.getSourceAsMap().get(SHAPE_FIELD_NAME);
+                                Shape geom = new JtsPoint(factory.createPoint(new org.locationtech.jts.geom.Coordinate(((Number)pt.get("lon")).doubleValue(),((Number)pt.get("lat")).doubleValue())), JtsSpatialContext.GEO);
                                 if (geom.relate(geomTest).intersects()) {
                                     break;
                                 }
@@ -852,27 +862,13 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	
 	@Override
 	public synchronized void storeRecord(DataKey key, DataBlock data) {
-//	    // build the key as recordTYpe_timestamp_producerID
-//        String esKey = getRsKey(key);
-//
-//	    if(!(key instanceof ObsKey)) {
-//			// get blob from dataBlock object using serializer
-//			Object blob = this.getBlob(data);
-//
-//			Map<String, Object> json = new HashMap<>();
-//			json.put(TIMESTAMP_FIELD_NAME,key.timeStamp); // store timestamp
-//			json.put(PRODUCER_ID_FIELD_NAME,key.producerID); // store producerID
-//			json.put(RECORD_TYPE_FIELD_NAME,key.recordType); // store recordType
-//			json.put(BLOB_FIELD_NAME,blob); // store DataBlock
-//
-//			// set id and blob before executing the request
-//			String id = client.prepareIndex(indexNamePrepend,"_doc")
-//					.setId(esKey)
-//                    .setParent(NO_PARENT_VALUE)
-//					.setSource(json)
-//					.get().getId();
-//		} else {
-//			ObsKey obsKey = (ObsKey) key;
+
+	    if(!(key instanceof ObsKey)) {
+			super.storeRecord(key, data);
+		} else {
+            // build the key as recordTYpe_timestamp_producerID
+            String esKey = getRsKey(key);
+			ObsKey obsKey = (ObsKey) key;
 //
 //			// get blob from dataBlock object using serializer
 //			Object blob = this.getBlob(data);
@@ -912,7 +908,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 //			        .setId(esKey)
 //					.setParent(uniqueParentID)
 //					.setSource(json).get().getId();
-//		}
+		}
 	}
 	
 	@Override
@@ -929,7 +925,13 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 				// Convert to elastic search epoch millisecond
 				builder.field(STORAGE_ID_FIELD_NAME, config.id);
 				builder.field(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_FOI);
-				builder.field(SHAPE_FIELD_NAME, getShapeBuilder(foi.getLocation()));
+				Point centroid = getCentroid(foi.getLocation());
+				builder.startObject(SHAPE_FIELD_NAME);
+                {
+                    builder.field("lat", centroid.getY());
+                    builder.field("lon", centroid.getX());
+                }
+                builder.endObject();
 				builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, producerID);
 				builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
 				builder.field(BLOB_FIELD_NAME, bytes);
@@ -1075,6 +1077,18 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		return new PointBuilder(x, y);
 	}
 
+	Point getCentroid(AbstractGeometry geometry) throws SensorHubException {
+        if(geometry instanceof PolygonJTS) {
+            return ((PolygonJTS)geometry).getCentroid();
+        } else if(geometry instanceof PointJTS) {
+            return  (PointJTS)geometry;
+        } else if(geometry instanceof EnvelopeJTS) {
+            return geometryFactory.createPoint(((Envelope)geometry).centre());
+        } else {
+            throw new SensorHubException("Unsupported Geometry exception: "+geometry.getClass());
+        }
+    }
+
 	/**
 	 * Build the corresponding builder given a generic geometry.
 	 * @param geometry The abstract geometry
@@ -1100,14 +1114,15 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 	 * @throws IOException
 	 */
 	protected synchronized QueryBuilder getPolygonGeoQuery(Polygon polygon) throws IOException {
-		return QueryBuilders.geoIntersectionQuery(SHAPE_FIELD_NAME,
-				getPolygonBuilder(polygon));
+	    Envelope envelope = polygon.getEnvelopeInternal();
+		return QueryBuilders.geoBoundingBoxQuery(SHAPE_FIELD_NAME).setCorners(envelope.getMaxY(), envelope.getMinX(), envelope.getMinY(), envelope.getMaxX());
 	}
 
 	static final class AbstractFeatureIterator implements Iterator<AbstractFeature> {
         ESIterator searchHitsIterator;
         Shape geomTest;
         AbstractFeature nextFeature = null;
+        org.locationtech.jts.geom.GeometryFactory factory = new org.locationtech.jts.geom.GeometryFactory();
 
         public AbstractFeatureIterator(ESIterator searchHitsIterator, Shape geomTest) {
             this.searchHitsIterator = searchHitsIterator;
@@ -1135,7 +1150,11 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
                     try {
                         do {
                             // Extract shape from the geometry field using ES shape parser
-                            Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+                            //Shape geom = ESObsStorageImpl.parseResultSourceGeometry(nextSearchHit.getSourceAsString());
+
+                            Map pt = (Map)nextSearchHit.getSourceAsMap().get(SHAPE_FIELD_NAME);
+                            Shape geom = new JtsPoint(factory.createPoint(new org.locationtech.jts.geom.Coordinate(((Number)pt.get("lon")).doubleValue(),((Number)pt.get("lat")).doubleValue())), JtsSpatialContext.GEO);
+
                             if (geom.relate(geomTest).intersects()) {
                                 break;
                             }
