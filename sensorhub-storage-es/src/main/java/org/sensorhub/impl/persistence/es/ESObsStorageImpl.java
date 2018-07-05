@@ -20,7 +20,6 @@ import net.opengis.gml.v32.AbstractGeometry;
 import net.opengis.gml.v32.impl.EnvelopeJTS;
 import net.opengis.gml.v32.impl.PointJTS;
 import net.opengis.gml.v32.impl.PolygonJTS;
-import net.opengis.swe.v20.DataBlock;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
@@ -105,45 +104,6 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			}
 	    }
 	}
-	
-//	@Override
-//	protected void createIndices (){
-//		super.createIndices();
-//
-//		// create FOI index
-//		try {
-//			client.admin().indices()
-//			    .preparePutMapping(indexNamePrepend)
-//			    .setType("_doc")
-//			    .setSource(getFoiMapping())
-//			    .execute().actionGet();
-//		} catch (IOException e) {
-//			log.error("Cannot create the " + FOI_IDX_NAME + " mapping",e);
-//		}
-//
-//		// create FOI bounds index
-//		// this is used to store computed geographic bounds since
-//		// the geobounds aggregation doesn't work with geo_shape yet
-//        try {
-//            client.admin().indices()
-//                .preparePutMapping(indexNamePrepend)
-//                .setSource(getFoiBoundsMapping())
-//                .execute().actionGet();
-//
-//            // index an empty bbox
-//            foiExtent = new Bbox();
-//            client.prepareIndex(indexNamePrepend, "_doc")
-//                .setId(GEOBOUNDS_IDX_NAME)
-//                .setSource(BLOB_FIELD_NAME, this.getBlob(foiExtent))
-//                .get();
-//        } catch (IOException e) {
-//            log.error("Cannot create the " + GEOBOUNDS_IDX_NAME + " mapping",e);
-//        }
-//
-//
-//		//TODO: update mapping for RS_DATA and add support for samplingTime => geo_shape
-//	}
-//
 
 	/**
 	 * Transform the recordStorage data key into a DataKey by splitting <recordtype><SEPARATOR><timestamp><SEPARATOR><producerID>.
@@ -500,124 +460,6 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		return new AbstractFeatureIterator(searchHitsIterator, geomTest);
 	}
 
-	@Override
-	public synchronized DataBlock getDataBlock(DataKey key) {
-		return null;
-//
-//		// because we need to specify parent in any case
-//		String parent = "";
-//
-//		// test if obsKey
-//		// if not, set parent to -1. If no parent is specified, ES will throw an exception.
-//		// we must specify a parent
-//		if(!(key instanceof ObsKey)) {
-//			parent = NO_PARENT_VALUE;
-//		} else {
-//			parent = ((ObsKey)key).foiID;
-//		}
-//
-//		DataBlock result = null;
-//		// build the key as recordTYpe_timestamp_producerID
-//		String esKey = getRsKey(key);
-//
-//		// build the request
-//		GetResponse  response = client.prepareGet(indexNamePrepend,"_doc",esKey)
-//				.setParent(parent)
-//				.get();
-//
-//		// deserialize the blob field from the response if any
-//		if(response.isExists()) {
-//			result = this.<DataBlock>getObject(response.getSource().get(BLOB_FIELD_NAME)); // DataBlock
-//		}
-//		return result;
-	}
-	
-	@Override
-	public synchronized void removeRecord(DataKey key) {
-
-
-//
-//		// because we need to specify parent in any case
-//		String parent = "";
-//
-//		// test if obsKey
-//		// if not, set parent to -1. If no parent is specified, ES will throw an exception.
-//		// we must specify a parent
-//		if(!(key instanceof ObsKey)) {
-//			parent = NO_PARENT_VALUE;
-//		} else {
-//			parent = ((ObsKey)key).foiID;
-//		}
-//
-//		// build the key as recordTYpe_timestamp_producerID
-//		String esKey = getRsKey(key);
-//
-//		// prepare delete request
-//		client.prepareDelete(indexNamePrepend, RS_DATA_IDX_NAME, esKey)
-//			.setParent(parent).get();
-	}
-	
-	@Override
-	public synchronized void updateRecord(DataKey key, DataBlock data) {
-//		String esKey = getRsKey(key);
-//
-//		if(!(key instanceof ObsKey)) {
-//			// build the key as recordTYpe_timestamp_producerID
-//
-//			// get blob from dataBlock object using serializer
-//			Object blob = this.getBlob(data);
-//
-//			//TOCHECK: do we need to store the whole key?
-//			Map<String, Object> json = new HashMap<>();
-//			json.put(TIMESTAMP_FIELD_NAME,key.timeStamp); // store timestamp
-//			json.put(PRODUCER_ID_FIELD_NAME,key.producerID); // store producerID
-//			json.put(RECORD_TYPE_FIELD_NAME,key.recordType); // store recordType
-//			json.put(BLOB_FIELD_NAME,blob); // store DataBlock
-//
-//			// create update request
-//			client.prepareUpdate(indexNamePrepend, RS_DATA_IDX_NAME, esKey)
-//				.setDoc(json)
-//				.setParent(NO_PARENT_VALUE).get();
-//		} else {
-//			ObsKey obsKey = (ObsKey) key;
-//
-//			// get blob from dataBlock object using serializer
-//			Object blob = this.getBlob(data);
-//
-//			Map<String, Object> json = new HashMap<>();
-//			json.put(TIMESTAMP_FIELD_NAME,key.timeStamp); // store timestamp
-//
-//			if(key.producerID != null) {
-//				json.put(PRODUCER_ID_FIELD_NAME,key.producerID); // store producerID
-//			}
-//
-//			if(key.recordType != null) {
-//				json.put(RECORD_TYPE_FIELD_NAME,key.recordType); // store recordType
-//			}
-//
-//			json.put(BLOB_FIELD_NAME,blob); // store DataBlock
-//
-//			// obs part
-//			json.put(RESULT_TIME_FIELD_NAME,obsKey.resultTime);
-//
-//			if(obsKey.foiID != null) {
-//				json.put(FOI_UNIQUE_ID_FIELD,obsKey.foiID);
-//			}
-//
-//			if(obsKey.samplingGeometry != null) {
-//				json.put(SAMPLING_GEOMETRY_FIELD_NAME,getPolygonBuilder(obsKey.samplingGeometry));
-//			}
-//
-//			// create update request
-//			client.prepareUpdate(indexNamePrepend, RS_DATA_IDX_NAME, esKey)
-//				.setDoc(json)
-//				.setParent(obsKey.foiID).get();
-//		}
-//
-		
-	}
-
-
     void storeRecordIndexRequestFields(XContentBuilder builder, DataKey key) throws IOException {
         if((key instanceof ObsKey)) {
             ObsKey obsKey = (ObsKey) key;
@@ -668,7 +510,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
                 }
                 builder.endObject();
 				builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, producerID);
-				builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
+				builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
 				builder.field(BLOB_FIELD_NAME, bytes);
 			}
 			builder.endObject();
@@ -684,63 +526,6 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			logger.error(String.format("storeFoi exception %s:%s in elastic search driver",producerID, foi.getName()), ex);
 		}
 	}
-
-	/**
-	 * Build and return the FOI mapping.
-	 * @return The object used to map the type
-	 * @throws IOException
-	 */
-	protected synchronized XContentBuilder getFoiMapping() throws IOException {
-		return null;
-
-//		XContentBuilder builder = XContentFactory.jsonBuilder();
-//	    try
-//        {
-//            builder.startObject()
-//            		.startObject(FOI_IDX_NAME)
-//            			.startObject("properties")
-//            			    .startObject(FOI_UNIQUE_ID_FIELD).field("type", "keyword").endObject()
-//                            .startObject(SHAPE_FIELD_NAME).field("type", "geo_shape").endObject()
-//            				.startObject(PRODUCER_ID_FIELD_NAME).field("type", "keyword").endObject()
-//            				.startObject(BLOB_FIELD_NAME).field("type", "binary").endObject()
-//            			.endObject()
-//            		.endObject()
-//            	.endObject();
-//            return builder;
-//        }
-//        catch (IOException e)
-//        {
-//            builder.close();
-//            throw e;
-//        }
-	}
-	
-	/**
-     * Build and return the FOI bounds mapping.
-     * @return The object used to map the type
-     * @throws IOException
-     */
-    protected synchronized XContentBuilder getFoiBoundsMapping() throws IOException {
-    	return null;
-//        XContentBuilder builder = XContentFactory.jsonBuilder();
-//        try
-//        {
-//            builder.startObject()
-//                .startObject(GEOBOUNDS_IDX_NAME)
-//                    .startObject("properties")
-//                        .startObject(BLOB_FIELD_NAME).field("type", "binary").endObject()
-//                    .endObject()
-//                .endObject()
-//            .endObject();
-//            return builder;
-//        }
-//        catch (IOException e)
-//        {
-//            builder.close();
-//            throw e;
-//        }
-    }
-
 
 	/**
      * Gets the envelope builder from a bbox object.
