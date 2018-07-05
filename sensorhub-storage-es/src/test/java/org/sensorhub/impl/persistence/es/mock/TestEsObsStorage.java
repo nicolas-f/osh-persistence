@@ -30,7 +30,7 @@ public class TestEsObsStorage  extends AbstractTestObsStorage<ESObsStorageImpl> 
 
     protected static final String CLUSTER_NAME = "elasticsearch";
 
-    private static final boolean clean_index = false;
+    private static final boolean clean_index = true;
 
     @Before
     public void init() throws Exception {

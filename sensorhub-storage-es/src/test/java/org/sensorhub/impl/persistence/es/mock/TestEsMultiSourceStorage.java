@@ -14,67 +14,66 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es.mock;
 
-public class TestEsMultiSourceStorage {
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
+import org.junit.After;
+import org.junit.Before;
+import org.sensorhub.api.common.SensorHubException;
+import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
+import org.sensorhub.impl.persistence.es.ESMultiSourceStorageImpl;
+import org.sensorhub.test.persistence.AbstractTestMultiObsStorage;
 
-// extends AbstractTestBasicStorage<ESMultiSourceStorageImpl> {
-//
-//    protected static final String CLUSTER_NAME = "elasticsearch";
-//    private static TransportClient client;
-//	private static File tmpDir;
-//
-//	static {
-//		tmpDir = new File(System.getProperty("java.io.tmpdir")+"/es/"+UUID.randomUUID().toString());
-//		tmpDir.mkdirs();
-//		try {
-//			client = getTransportClient();
-//		} catch (NodeValidationException e) {
-//			e.printStackTrace();
-//		}
-//	}
-//
-//	@Before
-//	public void init() throws Exception {
-//
-//
-//		ESBasicStorageConfig config = new ESBasicStorageConfig();
-//		config.autoStart = true;
-//		config.clusterName = CLUSTER_NAME;
-//		config.scrollFetchSize = 2000;
-//		config.bulkConcurrentRequests = 0;
-//		config.id = "junit_" + UUID.randomUUID().toString();
-//
-//		storage = new ESMultiSourceStorageImpl(client);
-//		storage.init(config);
-//		storage.start();
-//	}
-//
-//	@Override
-//	protected void forceReadBackFromStorage() throws Exception {
-//		// Let the time to ES to write the data
-//    	// if some tests are not passed,  try to increase this value first!!
-//		storage.commit();
-//
-//	}
-//
-//	public static TransportClient getTransportClient() throws NodeValidationException {
-//		try {
-//			return new PreBuiltTransportClient(Settings.EMPTY)
-//					.addTransportAddress(new TransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
-//		} catch (UnknownHostException ex) {
-//			throw new NodeValidationException(ex.getLocalizedMessage());
-//		}
-//	}
-//
-//	@AfterClass
-//    public static void cleanup() throws Exception {
-//		if(client != null) {
-//			client.close();
-//			client = null;
-//		}
-//
-//		if(tmpDir.exists()) {
-//			FileUtils.deleteRecursively(tmpDir);
-//		}
-//	}
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class TestEsMultiSourceStorage  extends AbstractTestMultiObsStorage<ESMultiSourceStorageImpl> {
+
+    protected static final String CLUSTER_NAME = "elasticsearch";
+
+    private static final boolean clean_index = false;
+
+    @Before
+    public void init() throws Exception {
+
+
+        ESBasicStorageConfig config = new ESBasicStorageConfig();
+        config.autoStart = true;
+        config.clusterName = CLUSTER_NAME;
+        List<String> nodes = new ArrayList<String>();
+        nodes.add("localhost:9200");
+        nodes.add("localhost:9201");
+
+        config.nodeUrls = nodes;
+        config.bulkConcurrentRequests = 0;
+        config.id = "junit_testesmultisourcestorage_" + System.currentTimeMillis();
+        config.indexNamePrepend = "data_" + config.id + "_";
+        config.indexNameMetaData = "meta_" + config.id + "_";
+
+        storage = new ESMultiSourceStorageImpl();
+        storage.init(config);
+        storage.start();
+    }
+
+    @After
+    public void after() throws SensorHubException {
+        // Delete added index
+        storage.commit();
+        if(clean_index) {
+            DeleteIndexRequest request = new DeleteIndexRequest(storage.getAddedIndex().toArray(new String[storage.getAddedIndex().size()]));
+            try {
+                storage.getClient().indices().delete(request);
+            } catch (IOException ex) {
+                throw new SensorHubException(ex.getLocalizedMessage(), ex);
+            }
+        }
+        storage.stop();
+    }
+
+    @Override
+    protected void forceReadBackFromStorage() throws Exception {
+        // Let the time to ES to write the data
+        // if some tests are not passed,  try to increase this value first!!
+        storage.commit();
+    }
 }
 	

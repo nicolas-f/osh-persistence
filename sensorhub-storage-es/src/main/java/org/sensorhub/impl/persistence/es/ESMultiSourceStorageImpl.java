@@ -14,14 +14,24 @@ Copyright (C) 2012-2016 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
+import java.io.IOException;
 import java.util.*;
 
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.TermQueryBuilder;
 import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
+import org.elasticsearch.search.aggregations.support.ValueType;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.sensorhub.api.persistence.IMultiSourceStorage;
 import org.sensorhub.api.persistence.IObsStorage;
 import org.slf4j.Logger;
@@ -50,22 +60,32 @@ public class ESMultiSourceStorageImpl extends ESObsStorageImpl implements IMulti
 	
 	@Override
 	public Collection<String> getProducerIDs() {
-    	return new ArrayList<>();
-//		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend)
-//				.setTypes(RS_DATA_IDX_NAME)
-//				.setQuery(QueryBuilders.existsQuery(PRODUCER_ID_FIELD_NAME))
-//		        .setScroll(new TimeValue(config.scrollMaxDuration));
-//
-//		// wrap the request into custom ES Scroll iterator
-//		final Iterator<SearchHit> searchHitsIterator = new ESIterator(client, scrollReq,
-//				config.scrollFetchSize); //max of scrollFetchSize hits will be returned for each scroll
-//
-//		Set<String> uniqueList = new HashSet<>();
-//		while(searchHitsIterator.hasNext()) {
-//			SearchHit hit = searchHitsIterator.next();
-//			uniqueList.add(hit.getSourceAsMap().get(PRODUCER_ID_FIELD_NAME).toString());
-//		}
-//		return uniqueList;
+		ArrayList<String> resultList = new ArrayList<>();
+		final String aggregateName = "producers";
+		// Compute unique values of producers id in the foi meta data index
+		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+		SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+		sourceBuilder.size(0); // Do not get hits
+		sourceBuilder.query(new BoolQueryBuilder().must(new TermQueryBuilder(STORAGE_ID_FIELD_NAME, config.id)).must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, FOI_IDX_NAME)));
+		sourceBuilder.aggregation(new TermsAggregationBuilder(aggregateName, ValueType.STRING).field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME));
+		searchRequest.source(sourceBuilder);
+		try {
+			SearchResponse response = client.search(searchRequest);
+			Aggregation responseMap = response.getAggregations().getAsMap().get(aggregateName);
+			Object result = responseMap.getMetaData().get("bucket");
+
+			if(result instanceof Collection) {
+				for(Object res : (Collection)result) {
+					if(res instanceof Map) {
+						resultList.add((String)((Map) res).get("key"));
+					}
+				}
+			}
+		} catch (IOException ex) {
+			log.error(ex.getLocalizedMessage(), ex);
+			return Collections.emptyList();
+		}
+		return resultList;
 	}
 
 	@Override
