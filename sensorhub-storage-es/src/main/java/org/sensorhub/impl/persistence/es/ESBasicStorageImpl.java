@@ -281,6 +281,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
         builder.endObject();
     }
+
 	void createMetaMapping () throws IOException {
 		// create the index
 	    CreateIndexRequest indexRequest = new CreateIndexRequest(indexNameMetaData);
@@ -907,10 +908,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 public IDataRecord next() {
                     SearchHit nextSearchHit = searchHitsIterator.next();
 
+                    Map<String, Object> queryResult = nextSearchHit.getSourceAsMap();
                     // build key
-                    final DataKey key = getDataKey(nextSearchHit.getId());
+                    final DataKey key = getDataKey(nextSearchHit.getId(), queryResult);
 
-                    final DataBlock datablock = dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap(), null, 0);
+                    final DataBlock datablock = dataBlockFromES(info.recordDescription, queryResult, null, 0);
 
                     return new IDataRecord() {
 
@@ -1068,16 +1070,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         builder.endObject();
     }
 
-    void createDataMapping(EsRecordStoreInfo rsInfo) throws IOException {
-        createDataMapping(rsInfo, false);
-    }
-
     /**
      * @param rsInfo record store metadata
-     * @param dynamic False if some documents have optional fields
      * @throws IOException
      */
-    void createDataMapping(EsRecordStoreInfo rsInfo, boolean dynamic) throws IOException {
+    void createDataMapping(EsRecordStoreInfo rsInfo) throws IOException {
 
         // create the index
         CreateIndexRequest indexRequest = new CreateIndexRequest(rsInfo.indexName);
@@ -1087,9 +1084,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         {
             builder.startObject(rsInfo.name);
             {
-                if(!dynamic) {
-                    builder.field("dynamic", false);
-                }
+                builder.field("dynamic", false);
                 builder.startObject("properties");
                 {
                     createDataMappingFields(builder);
@@ -1175,6 +1170,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
+    void storeRecordIndexRequestFields(XContentBuilder builder, DataKey key) throws IOException {
+        builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, key.producerID);
+        builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, ESDataStoreTemplate.toEpochMillisecond(key.timeStamp));
+        builder.field(STORAGE_ID_FIELD_NAME, config.id);
+    }
 
     IndexRequest storeRecordIndexRequest(DataKey key, DataBlock data) throws IOException {
         IndexRequest request = null;
@@ -1186,9 +1186,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
             builder.startObject();
             {
-                builder.field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, key.producerID);
-                builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, ESDataStoreTemplate.toEpochMillisecond(key.timeStamp));
-                builder.field(STORAGE_ID_FIELD_NAME, config.id);
+                storeRecordIndexRequestFields(builder, key);
                 DataComponent dataComponent = info.getRecordDescription();
                 dataComponentToJson(dataComponent, data, builder, 1, 0);
             }
@@ -1345,7 +1343,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * @param rsKey the corresponding dataKey
 	 * @return the dataKey. NULL if the length != 3 after splitting
 	 */
-	protected DataKey getDataKey(String rsKey) {
+	protected DataKey getDataKey(String rsKey, Map<String, Object> content) {
 		DataKey dataKey = null;
 		
 		// split the rsKey using separator
