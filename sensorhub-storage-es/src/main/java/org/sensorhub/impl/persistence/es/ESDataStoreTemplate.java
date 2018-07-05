@@ -13,6 +13,9 @@ import java.util.List;
 
 public class ESDataStoreTemplate {
 
+    private static final long MIN_DATE_EPOCH = -62138538000000L;
+    private static final long MAX_DATE_EPOCH = 253336460400000L;
+
     public static final String PRODUCER_ID_FIELD_NAME = "producerID";
     public static final String TIMESTAMP_FIELD_NAME = "timestamp";
 
@@ -41,7 +44,7 @@ public class ESDataStoreTemplate {
     }
 
     public static long toEpochMillisecond(double timeSecond) {
-        return Double.valueOf(timeSecond * 1000).longValue();
+        return Math.min(MAX_DATE_EPOCH, Math.max(MIN_DATE_EPOCH, Double.valueOf(timeSecond * 1000).longValue()));
     }
 
     public static double fromEpochMillisecond(Number timestamp) {

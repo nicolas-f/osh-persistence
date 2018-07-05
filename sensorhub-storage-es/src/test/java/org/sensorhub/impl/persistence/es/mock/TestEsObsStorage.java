@@ -44,7 +44,6 @@ public class TestEsObsStorage  extends AbstractTestObsStorage<ESObsStorageImpl> 
         nodes.add("localhost:9201");
 
         config.nodeUrls = nodes;
-        config.timestampAsLong = true;
         config.bulkConcurrentRequests = 0;
         config.id = "junit_testesobsstorage_" + System.currentTimeMillis();
         config.indexNamePrepend = "data_" + config.id + "_";

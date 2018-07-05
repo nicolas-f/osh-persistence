@@ -85,9 +85,6 @@ import java.util.*;
 public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> implements IRecordStorageModule<ESBasicStorageConfig> {
 	private static final int TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE = 5000;
 
-	private static final long MIN_DATE_EPOCH = -62138538000000L;
-    private static final long MAX_DATE_EPOCH = 253336460400000L;
-
 	protected static final double MAX_TIME_CLUSTER_DELTA = 60.0;
 
 	// ms .Fetch again record store map if it is done at least this time
@@ -273,6 +270,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
         {
             builder.field("type", "date");
+            builder.field("format", "epoch_millis");
         }
         builder.endObject();
         builder.startObject(BLOB_FIELD_NAME);
@@ -345,10 +343,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         return result;
 	}
 
-	private static Date secondsToESDate(double time) {
-	    return new Date(Math.max(MIN_DATE_EPOCH, Math.min(MAX_DATE_EPOCH, ESDataStoreTemplate.toEpochMillisecond(time))));
-    }
-
 	@Override
 	public List<AbstractProcess> getDataSourceDescriptionHistory(double startTime, double endTime) {
         List<AbstractProcess> results = new ArrayList<>();
@@ -358,7 +352,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         QueryBuilder query = QueryBuilders.boolQuery()
                 .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION))
-                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(secondsToESDate(startTime)).to(secondsToESDate(endTime)));
+                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(ESDataStoreTemplate.toEpochMillisecond(startTime)).to(ESDataStoreTemplate.toEpochMillisecond(endTime)).format("epoch_millis"));
         searchSourceBuilder.query(query);
         searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
         searchSourceBuilder.size(config.scrollFetchSize);
@@ -492,16 +486,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	public void removeDataSourceDescriptionHistory(double startTime, double endTime) {
         try {
             // Delete by query, currently not supported by High Level Api
-            Object from = secondsToESDate(startTime);
-            Object to = secondsToESDate(endTime);
-            if(config.timestampAsLong) {
-                from = ESDataStoreTemplate.toEpochMillisecond(startTime);
-                to = ESDataStoreTemplate.toEpochMillisecond(endTime);
-            }
-            BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION))
+            BoolQueryBuilder query = QueryBuilders.boolQuery().must(
+                    QueryBuilders.termQuery(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION))
                     .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                            .from(from)
-                            .to(to));
+                            .from(ESDataStoreTemplate.toEpochMillisecond(startTime))
+                            .to(ESDataStoreTemplate.toEpochMillisecond(endTime)).format("epoch_millis"));
 
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             XContentBuilder builder = XContentFactory.jsonBuilder(bos);
@@ -587,7 +576,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 builder.field(STORAGE_ID_FIELD_NAME, config.id);
                 builder.field(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_RECORD_STORE);
                 builder.field(DATA_INDEX_FIELD_NAME, rsInfo.getIndexName()); // store recordType
-                builder.timeField(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
+                builder.field(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, System.currentTimeMillis());
                 builder.field(BLOB_FIELD_NAME, bytes);
             }
             builder.endObject();
@@ -696,7 +685,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             searchSourceBuilder.query(QueryBuilders.boolQuery().must(
                     QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                     .must(QueryBuilders.rangeQuery(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                            .from(secondsToESDate(System.currentTimeMillis() - TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE))));
+                            .from(ESDataStoreTemplate.toEpochMillisecond(System.currentTimeMillis() - TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE)).format("epoch_millis")));
             searchSourceBuilder.size(config.scrollFetchSize);
             searchSourceBuilder.fetchSource(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, null);
             searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.ASC));
@@ -1060,7 +1049,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         builder.startObject(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME);
         {
             // Issue with date https://discuss.elastic.co/t/weird-issue-with-date-sort/137646
-            builder.field("type", config.timestampAsLong ? "long" : "date");
+            builder.field("type", "date");
+            builder.field("format", "epoch_millis");
         }
         builder.endObject();
         builder.startObject(STORAGE_ID_FIELD_NAME);
@@ -1254,16 +1244,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     BoolQueryBuilder queryByFilter(IDataFilter filter) {
         double[] timeRange = getTimeRange(filter);
 
-        Object from = secondsToESDate(timeRange[0]);
-        Object to = secondsToESDate(timeRange[1]);
-        if(config.timestampAsLong) {
-            from = ESDataStoreTemplate.toEpochMillisecond(timeRange[0]);
-            to = ESDataStoreTemplate.toEpochMillisecond(timeRange[1]);
-        }
         BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
                 .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                        .from(from)
-                        .to(to));
+                        .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
+                        .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])).format("epoch_millis"));
 
         // check if any producerIDs
         if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
