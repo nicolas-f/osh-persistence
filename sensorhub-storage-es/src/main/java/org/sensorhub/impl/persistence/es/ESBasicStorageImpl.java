@@ -19,6 +19,7 @@ import net.opengis.gml.v32.TimeInstant;
 import net.opengis.gml.v32.TimePeriod;
 import net.opengis.sensorml.v20.AbstractProcess;
 import net.opengis.swe.v20.*;
+import net.opengis.swe.v20.Vector;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
@@ -107,6 +108,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	protected static final String BLOB_FIELD_NAME = "blob";
 
 	private static final int WAIT_TIME_AFTER_COMMIT = 1000;
+
+	public static final String Z_FIELD = "_height";
 
 	// Last time the store has been changed, may require waiting if data changed since less than a second
 	long storeChanged = 0;
@@ -802,11 +805,28 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             dataSimpleComponent((SimpleComponent) component, data, 0, dataBlock);
         } else {
 	        final int arraySize = component.getComponentCount();
-            for (int i = 0; i < arraySize; i++) {
-                if (component.getComponent(i) instanceof SimpleComponent) {
-                    dataSimpleComponent((SimpleComponent) component.getComponent(i), data,arraySize * j + i, dataBlock);
+            for (int i = 0; i < arraySize;) {
+                DataComponent subComponent = component.getComponent(i);
+                if (subComponent instanceof SimpleComponent) {
+                    dataSimpleComponent((SimpleComponent) subComponent, data,arraySize * j + i, dataBlock);
+                    i++;
                 } else {
-                    dataBlockFromES(component.getComponent(i), (Map)((List)data.get(component.getComponent(i).getName())).get(i), dataBlock, i);
+                    if(subComponent instanceof Vector) {
+                        // Extract coordinate component
+                        Object values = data.get(subComponent.getName());
+                        if(values instanceof List) {
+                            dataBlock.setDoubleValue(i++, ((Number) ((List) values).get(0)).doubleValue());
+                            dataBlock.setDoubleValue(i++, ((Number) ((List) values).get(1)).doubleValue());
+                        } else if (values instanceof Map) {
+                            dataBlock.setDoubleValue(i++, ((Number) ((Map) values).get("lat")).doubleValue());
+                            dataBlock.setDoubleValue(i++, ((Number) ((Map) values).get("lon")).doubleValue());
+                        }
+                        // Retrieve Z value
+                        dataBlock.setDoubleValue(i++,
+                                ((Number)data.get(subComponent.getName() + Z_FIELD)).doubleValue());
+                    } else {
+                        dataBlockFromES(subComponent, (Map) ((List) data.get(subComponent.getName())).get(i), dataBlock, i);
+                    }
                 }
             }
         }
@@ -1048,6 +1068,18 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 builder.endObject();
             }
             builder.endObject();
+        } else if(dataComponent instanceof Vector) {
+            // Point type
+            builder.startObject(dataComponent.getName());
+            {
+                builder.field("type", "geo_point");
+            }
+            builder.endObject();
+            builder.startObject(dataComponent.getName()+Z_FIELD);
+            {
+                builder.field("type", "double");
+            }
+            builder.endObject();
         }
     }
 
@@ -1155,6 +1187,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, int nj, int j) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
             dataComponentSimpleToJson((SimpleComponent) dataComponent, data, j, builder);
+        } else if(dataComponent instanceof Vector) {
+                builder.startObject(dataComponent.getName());
+                {
+                    builder.field("lat", data.getDoubleValue(j));
+                    builder.field("lon", data.getDoubleValue(1 + j));
+                }
+                builder.endObject();
+                builder.field(dataComponent.getName()+Z_FIELD, data.getDoubleValue(2 + j));
         } else {
             int compSize = dataComponent.getComponentCount();
             if(dataComponent instanceof DataArray) {
@@ -1162,13 +1202,17 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             }
             for (int i = 0; i < compSize; i++) {
                 if (dataComponent.getComponent(i) instanceof SimpleComponent) {
-                    dataComponentSimpleToJson((SimpleComponent) dataComponent.getComponent(i), data, j*compSize + i, builder);
+                    dataComponentSimpleToJson((SimpleComponent) dataComponent.getComponent(i), data, j * compSize + i, builder);
                 } else {
-                    builder.startObject();
                     if(data instanceof DataBlockParallel) {
+                        builder.startObject();
+                        {
+                            dataComponentToJson(dataComponent.getComponent(i), data, builder, compSize, i);
+                        }
+                        builder.endObject();
+                    } else if(dataComponent.getComponent(i) instanceof Vector) {
                         dataComponentToJson(dataComponent.getComponent(i), data, builder, compSize, i);
                     }
-                    builder.endObject();
                 }
             }
             if(dataComponent instanceof DataArray) {
