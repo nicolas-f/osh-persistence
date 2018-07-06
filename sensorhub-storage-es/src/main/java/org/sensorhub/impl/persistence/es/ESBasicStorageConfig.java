@@ -14,9 +14,7 @@ Copyright (C) 2012-2015 Sensia Software LLC. All Rights Reserved.
 
 package org.sensorhub.impl.persistence.es;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 import org.sensorhub.api.config.DisplayInfo;
 import org.sensorhub.api.config.DisplayInfo.Required;
@@ -36,7 +34,7 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
 
     @Required
     @DisplayInfo(desc="ES cluster name")
-    public String clusterName;
+    public String clusterName = "elasticsearch";
 
     @DisplayInfo(desc = "ElasticSearch user for authentication (leave blank if not required)")
     public String user = "";
@@ -47,7 +45,7 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
         
     @Required
     @DisplayInfo(desc="List of nodes")
-    public List<String> nodeUrls = new ArrayList<>();
+    public List<String> nodeUrls = Arrays.asList("localhost:9200","localhost:9201");
 
     @DisplayInfo(desc="String to add in index name before the data name")
     public String indexNamePrepend = "";

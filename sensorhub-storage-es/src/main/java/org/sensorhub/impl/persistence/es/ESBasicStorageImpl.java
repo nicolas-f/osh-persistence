@@ -48,6 +48,7 @@ import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
@@ -476,7 +477,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public void removeDataSourceDescription(double time) {
         long epoch = ESDataStoreTemplate.toEpochMillisecond(time);
-		DeleteRequest deleteRequest = new DeleteRequest(indexNamePrepend, METADATA_TYPE_DESCRIPTION, config.id + "_" + epoch);
+		DeleteRequest deleteRequest = new DeleteRequest(indexNameMetaData, METADATA_TYPE_DESCRIPTION, config.id + "_" + epoch);
 		bulkProcessor.add(deleteRequest);
 
 		storeChanged = System.currentTimeMillis();
@@ -557,10 +558,26 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         return recordStoreCache;
 	}
 
+    /**
+     * Index in Elastic Search are restricted
+     * @param indexName Index name to remove undesired chars
+     * @return valid index for es
+     */
+	String fixIndexName(String indexName) {
+        for(Character chr : Strings.INVALID_FILENAME_CHARS) {
+            indexName = indexName.replace(chr.toString(), "");
+        }
+        indexName = indexName.replace("#", "");
+        while(indexName.startsWith("_") || indexName.startsWith("-") || indexName.startsWith("+")) {
+            indexName = indexName.substring(1, indexName.length());
+        }
+        return indexName.toLowerCase(Locale.ROOT);
+    }
+
 	@Override
 	public void addRecordStore(String name, DataComponent recordStructure, DataEncoding recommendedEncoding) {
         log.info("ESBasicStorageImpl:addRecordStore");
-        EsRecordStoreInfo rsInfo = new EsRecordStoreInfo(name,indexNamePrepend + recordStructure.getName(),
+        EsRecordStoreInfo rsInfo = new EsRecordStoreInfo(name,fixIndexName(indexNamePrepend + recordStructure.getName()),
                 recordStructure, recommendedEncoding);
 
         recordStoreCache.put(rsInfo.name, rsInfo);
