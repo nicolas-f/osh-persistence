@@ -32,7 +32,6 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
 
 	public static final String DEFAULT_INDEX_NAME_METADATA = "osh_meta_record_store";
 
-    @Required
     @DisplayInfo(desc="ES cluster name")
     public String clusterName = "elasticsearch";
 
@@ -43,9 +42,8 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @DisplayInfo.FieldType(DisplayInfo.FieldType.Type.PASSWORD)
     public String password = "";
         
-    @Required
     @DisplayInfo(desc="List of nodes")
-    public List<String> nodeUrls = Arrays.asList("localhost:9200","localhost:9201");
+    public List<String> nodeUrls = new ArrayList<>(Arrays.asList("localhost:9200","localhost:9201"));
 
     @DisplayInfo(desc="String to add in index name before the data name")
     public String indexNamePrepend = "";
