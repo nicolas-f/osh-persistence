@@ -16,9 +16,12 @@ package org.sensorhub.impl.persistence.es.mock;
 
 import net.opengis.gml.v32.Point;
 import net.opengis.gml.v32.impl.PointImpl;
+import net.opengis.swe.v20.DataArray;
 import net.opengis.swe.v20.DataBlock;
 import net.opengis.swe.v20.DataComponent;
 import net.opengis.swe.v20.DataEncoding;
+import net.opengis.swe.v20.DataRecord;
+import net.opengis.swe.v20.DataType;
 import net.opengis.swe.v20.Vector;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.junit.After;
@@ -39,6 +42,7 @@ import org.sensorhub.test.TestUtils;
 import org.sensorhub.test.persistence.AbstractTestBasicStorage;
 import org.vast.data.TextEncodingImpl;
 import org.vast.swe.SWEConstants;
+import org.vast.swe.SWEHelper;
 import org.vast.swe.helper.GeoPosHelper;
 
 import java.io.IOException;
@@ -137,6 +141,60 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
             i++;
         }
         assertEquals(1, i);
+    }
+
+    private static final float[] freqs = new float[]{20, 25, 31.5f, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500};
+
+    @Test
+    public void testNestedDataBlock() throws Exception {
+        SWEHelper fac = new SWEHelper();
+        DataComponent acousticData  = fac.newDataRecord();
+        acousticData.setName("acoustic_fast");
+        acousticData.setDefinition("http://sensorml.com/ont/swe/property/Acoustic");
+        acousticData.setDescription("Acoustic indicators measurements");
+
+        // add time, temperature, pressure, wind speed and wind direction fields
+        acousticData.addComponent("time", fac.newTimeStampIsoUTC());
+        acousticData.addComponent("leq", fac.newQuantity(SWEHelper.getPropertyUri("dBsplFast"), "Leq", null, "dB", DataType.FLOAT));
+        acousticData.addComponent("laeq", fac.newQuantity(SWEHelper.getPropertyUri("dBsplFast"), "LAeq", null, "dB(A)", DataType.FLOAT));
+
+        DataRecord nestedRec = fac.newDataRecord(2);
+        nestedRec.addComponent("freq", fac.newQuantity(SWEHelper.getPropertyUri("frequency"), "freq", null, "Hz", DataType.FLOAT));
+        nestedRec.addComponent("spl", fac.newQuantity(SWEHelper.getPropertyUri("spl"), "spl", null, "dB", DataType.FLOAT));
+
+        DataArray recordDesc = fac.newDataArray(freqs.length);
+        recordDesc.setName("spectrum");
+        recordDesc.setDefinition("urn:spectrum:third-octave");
+        recordDesc.setElementType("elt", nestedRec);
+        acousticData.addComponent("spectrum", recordDesc);
+
+        // also generate encoding definition
+        DataEncoding acousticEncoding = fac.newTextEncoding(",", "\n");
+
+
+        storage.addRecordStore(acousticData.getName(), acousticData, acousticEncoding);
+
+        forceReadBackFromStorage();
+
+        DataBlock dataBlock = acousticData.createDataBlock();
+        int index = 0;
+        dataBlock.setDoubleValue(index++, System.currentTimeMillis() / 1000.);
+        dataBlock.setFloatValue(index++, 45.4f);
+        dataBlock.setFloatValue(index++, 44.6f);
+        for(float freq : freqs) {
+            dataBlock.setFloatValue(index++, freq);
+            dataBlock.setFloatValue(index++, (float)(22.1 + Math.log10(freq)));
+        }
+        DataKey dataKey = new DataKey(acousticData.getName(),
+                "e44cb499-3b6c-4305-b479-ebacc965579f", dataBlock.getDoubleValue(0));
+
+        storage.storeRecord(dataKey, dataBlock);
+
+        forceReadBackFromStorage();
+
+        DataBlock dataBlock1 = storage.getDataBlock(dataKey);
+
+        TestUtils.assertEquals(dataBlock, dataBlock1);
     }
 
 }

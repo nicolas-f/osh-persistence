@@ -94,6 +94,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * <p>
@@ -780,7 +781,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
 	}
 
-	void dataSimpleComponent(SimpleComponent dataComponent, Map data,int i, DataBlock dataBlock) {
+	void dataSimpleComponent(SimpleComponent dataComponent, Map data, int i, DataBlock dataBlock) {
         switch (dataComponent.getDataType()) {
             case FLOAT:
                 dataBlock.setFloatValue(i, ((Number)data.get(dataComponent.getName())).floatValue());
@@ -814,41 +815,44 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
-	DataBlock dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, int j) {
-	    if(dataBlock == null) {
-            dataBlock = component.createDataBlock();
-        }
+	void dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, AtomicInteger fieldIndex) {
         if(component instanceof SimpleComponent) {
-            dataSimpleComponent((SimpleComponent) component, data, 0, dataBlock);
-        } else {
-	        final int arraySize = component.getComponentCount();
-            for (int i = 0; i < arraySize;) {
+            dataSimpleComponent((SimpleComponent) component, data, fieldIndex.getAndIncrement(), dataBlock);
+        } else if(component instanceof Vector) {
+            // Extract coordinate component
+            Object values = data.get(component.getName());
+            if(values instanceof List) {
+                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number) ((List) values).get(0)).doubleValue());
+                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number) ((List) values).get(1)).doubleValue());
+            } else if (values instanceof Map) {
+                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number) ((Map) values).get("lat")).doubleValue());
+                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number) ((Map) values).get("lon")).doubleValue());
+            }
+            // Retrieve Z value
+            dataBlock.setDoubleValue(fieldIndex.getAndIncrement(),
+                    ((Number)data.get(component.getName() + Z_FIELD)).doubleValue());
+
+        } else if(component instanceof DataRecord){
+            final int arraySize = component.getComponentCount();
+            for (int i = 0; i < arraySize; i++) {
                 DataComponent subComponent = component.getComponent(i);
-                if (subComponent instanceof SimpleComponent) {
-                    dataSimpleComponent((SimpleComponent) subComponent, data,arraySize * j + i, dataBlock);
-                    i++;
-                } else {
-                    if(subComponent instanceof Vector) {
-                        // Extract coordinate component
-                        Object values = data.get(subComponent.getName());
-                        if(values instanceof List) {
-                            dataBlock.setDoubleValue(i++, ((Number) ((List) values).get(0)).doubleValue());
-                            dataBlock.setDoubleValue(i++, ((Number) ((List) values).get(1)).doubleValue());
-                        } else if (values instanceof Map) {
-                            dataBlock.setDoubleValue(i++, ((Number) ((Map) values).get("lat")).doubleValue());
-                            dataBlock.setDoubleValue(i++, ((Number) ((Map) values).get("lon")).doubleValue());
-                        }
-                        // Retrieve Z value
-                        dataBlock.setDoubleValue(i++,
-                                ((Number)data.get(subComponent.getName() + Z_FIELD)).doubleValue());
-                    } else {
-                        dataBlockFromES(subComponent, (Map) ((List) data.get(subComponent.getName())).get(i), dataBlock, i);
-                        i++;
-                    }
-                }
+                dataBlockFromES(subComponent,  data, dataBlock, fieldIndex);
+            }
+        } else if(component instanceof DataArray) {
+            final int arraySize = component.getComponentCount();
+            List dataList = (List) data.get(component.getName());
+            for (int i = 0; i < arraySize;i++) {
+                DataComponent subComponent = component.getComponent(i);
+                dataBlockFromES(subComponent, (Map) dataList.get(i), dataBlock, fieldIndex);
             }
         }
-        return dataBlock;
+    }
+
+    DataBlock dataBlockFromES(DataComponent component, Map data) {
+	    AtomicInteger fieldIndex = new AtomicInteger(0);
+	    DataBlock dataBlock = component.createDataBlock();
+	    dataBlockFromES(component, data, dataBlock, fieldIndex);
+	    return dataBlock;
     }
 
 	@Override
@@ -868,7 +872,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
                 // deserialize the blob field from the response if any
                 if (response.isExists()) {
-                    result = dataBlockFromES(info.recordDescription, response.getSourceAsMap(), null, 0);
+                    result = dataBlockFromES(info.recordDescription, response.getSourceAsMap());
                 }
             } catch (IOException ex) {
                 log.error(ex.getLocalizedMessage(), ex);
@@ -911,7 +915,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 public DataBlock next() {
                     SearchHit nextSearchHit = searchHitsIterator.next();
 
-                    return dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap(), null, 0);
+                    return dataBlockFromES(info.recordDescription, nextSearchHit.getSourceAsMap());
                 }
             };
         } else {
@@ -956,7 +960,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     // build key
                     final DataKey key = getDataKey(nextSearchHit.getId(), queryResult);
 
-                    final DataBlock datablock = dataBlockFromES(info.recordDescription, queryResult, null, 0);
+                    final DataBlock datablock = dataBlockFromES(info.recordDescription, queryResult);
 
                     return new IDataRecord() {
 
@@ -1202,41 +1206,38 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
-    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, int nj, int j) throws IOException {
+    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
-            dataComponentSimpleToJson((SimpleComponent) dataComponent, data, j, builder);
+            dataComponentSimpleToJson((SimpleComponent) dataComponent, data, fieldCounter.getAndIncrement(), builder);
         } else if(dataComponent instanceof Vector) {
-                builder.startObject(dataComponent.getName());
-                {
-                    builder.field("lat", data.getDoubleValue(j));
-                    builder.field("lon", data.getDoubleValue(1 + j));
-                }
-                builder.endObject();
-                builder.field(dataComponent.getName()+Z_FIELD, data.getDoubleValue(2 + j));
-        } else {
+            builder.startObject(dataComponent.getName());
+            {
+                builder.field("lat", data.getDoubleValue(fieldCounter.getAndIncrement()));
+                builder.field("lon", data.getDoubleValue(fieldCounter.getAndIncrement()));
+            }
+            builder.endObject();
+            builder.field(dataComponent.getName()+Z_FIELD, data.getDoubleValue(fieldCounter.getAndIncrement()));
+        } else if(dataComponent instanceof DataArray) {
             int compSize = dataComponent.getComponentCount();
-            if(dataComponent instanceof DataArray) {
-                builder.startArray(((DataArray) dataComponent).getElementType().getName());
-            }
+            builder.startArray(dataComponent.getName());
             for (int i = 0; i < compSize; i++) {
-                if (dataComponent.getComponent(i) instanceof SimpleComponent) {
-                    dataComponentSimpleToJson((SimpleComponent) dataComponent.getComponent(i), data, j * compSize + i, builder);
-                } else {
-                    if(data instanceof DataBlockParallel) {
-                        builder.startObject();
-                        {
-                            dataComponentToJson(dataComponent.getComponent(i), data, builder, compSize, i);
-                        }
-                        builder.endObject();
-                    } else if(dataComponent.getComponent(i) instanceof Vector) {
-                        dataComponentToJson(dataComponent.getComponent(i), data, builder, compSize, i);
-                    }
-                }
+                builder.startObject();
+                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter);
+                builder.endObject();
             }
-            if(dataComponent instanceof DataArray) {
-                builder.endArray();
+            builder.endArray();
+        } else if(dataComponent instanceof DataRecord) {
+            int compSize = dataComponent.getComponentCount();
+            for (int i = 0; i < compSize; i++) {
+                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter);
             }
         }
+    }
+
+    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder) throws IOException
+    {
+        AtomicInteger fieldCounter = new AtomicInteger(0);
+        dataComponentToJson(dataComponent, data, builder, fieldCounter);
     }
 
     void storeRecordIndexRequestFields(XContentBuilder builder, DataKey key) throws IOException {
@@ -1245,7 +1246,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         builder.field(STORAGE_ID_FIELD_NAME, config.id);
     }
 
-    IndexRequest storeRecordIndexRequest(DataKey key, DataBlock data) throws IOException {
+    public IndexRequest storeRecordIndexRequest(DataKey key, DataBlock data) throws IOException {
         IndexRequest request = null;
 
         Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
@@ -1257,7 +1258,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             {
                 storeRecordIndexRequestFields(builder, key);
                 DataComponent dataComponent = info.getRecordDescription();
-                dataComponentToJson(dataComponent, data, builder, 1, 0);
+                dataComponentToJson(dataComponent, data, builder);
             }
             builder.endObject();
 
