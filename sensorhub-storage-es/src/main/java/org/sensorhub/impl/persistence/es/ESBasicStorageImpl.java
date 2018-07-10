@@ -1079,7 +1079,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 parseDataMapping(builder, component);
             }
         } else if(dataComponent instanceof DataArray){
-            builder.startObject(((DataArray) dataComponent).getElementType().getName());
+            builder.startObject(dataComponent.getName());
             {
                 builder.field("type", "nested");
                 builder.field("dynamic", false);
