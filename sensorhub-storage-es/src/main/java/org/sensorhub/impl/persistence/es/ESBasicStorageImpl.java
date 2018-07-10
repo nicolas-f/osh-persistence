@@ -63,17 +63,37 @@ import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.sensorhub.api.common.SensorHubException;
-import org.sensorhub.api.persistence.*;
+import org.sensorhub.api.persistence.DataKey;
+import org.sensorhub.api.persistence.IDataFilter;
+import org.sensorhub.api.persistence.IDataRecord;
+import org.sensorhub.api.persistence.IObsStorage;
+import org.sensorhub.api.persistence.IRecordStorageModule;
+import org.sensorhub.api.persistence.IStorageModule;
+import org.sensorhub.api.persistence.StorageException;
 import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.vast.data.*;
+import org.vast.data.DataBlockParallel;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.Boolean;
-import java.net.*;
+import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * <p>
@@ -117,8 +137,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	private List<String> addedIndex = new ArrayList<>();
 
     private Map<String, EsRecordStoreInfo> recordStoreCache = new HashMap<>();
-
-    private long recordStoreCachTime = 0;
 
 	protected static final double[] ALL_TIMES = new double[] {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
 	/**
@@ -253,6 +271,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         } catch (IOException ex) {
             logger.error("Cannot create metadata mapping", ex);
         }
+
+        // Retrieve store info
+
+        initStoreInfo();
 	}
 
 	void createMetaMappingProperties(XContentBuilder builder) throws IOException {
@@ -515,14 +537,9 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
 	}
 
-	@Override
-	public  Map<String, EsRecordStoreInfo> getRecordStores() {
-	    long now = System.currentTimeMillis();
-	    if(now - recordStoreCachTime < RECORD_STORE_CACHE_LIFETIME) {
-	        return recordStoreCache;
-        }
+	void initStoreInfo() {
 
-		Map<String, EsRecordStoreInfo> result = new HashMap<>();
+        Map<String, EsRecordStoreInfo> result = new HashMap<>();
 
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
@@ -540,7 +557,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 String scrollId = response.getScrollId();
                 for (SearchHit hit : response.getHits()) {
                     Map<String, Object> dataMap = hit.getSourceAsMap();
-                    EsRecordStoreInfo rsInfo = this.getObject(dataMap.get(BLOB_FIELD_NAME)); // DataStreamInfo
+                    EsRecordStoreInfo rsInfo = getObject(dataMap.get(BLOB_FIELD_NAME)); // DataStreamInfo
                     result.put(rsInfo.getName(), rsInfo);
                 }
                 if (response.getHits().getHits().length > 0) {
@@ -555,9 +572,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
 
         recordStoreCache = result;
+    }
 
-        recordStoreCachTime = now;
-
+	@Override
+	public  Map<String, EsRecordStoreInfo> getRecordStores() {
         return recordStoreCache;
 	}
 
@@ -579,7 +597,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	@Override
 	public void addRecordStore(String name, DataComponent recordStructure, DataEncoding recommendedEncoding) {
-        log.info("ESBasicStorageImpl:addRecordStore");
         EsRecordStoreInfo rsInfo = new EsRecordStoreInfo(name,fixIndexName(indexNamePrepend + recordStructure.getName()),
                 recordStructure, recommendedEncoding);
 
@@ -826,6 +843,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                                 ((Number)data.get(subComponent.getName() + Z_FIELD)).doubleValue());
                     } else {
                         dataBlockFromES(subComponent, (Map) ((List) data.get(subComponent.getName())).get(i), dataBlock, i);
+                        i++;
                     }
                 }
             }
