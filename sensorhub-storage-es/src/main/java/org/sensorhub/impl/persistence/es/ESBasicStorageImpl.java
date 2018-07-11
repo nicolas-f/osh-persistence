@@ -74,6 +74,9 @@ import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.vast.data.DataBlockParallel;
+import org.vast.swe.SWEConstants;
+import org.vast.swe.SWEHelper;
+import org.vast.swe.ScalarIndexer;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -815,9 +818,13 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
-	void dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, AtomicInteger fieldIndex) {
+	void dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, AtomicInteger fieldIndex, ScalarIndexer ignoreField) {
         if(component instanceof SimpleComponent) {
-            dataSimpleComponent((SimpleComponent) component, data, fieldIndex.getAndIncrement(), dataBlock);
+            if(ignoreField != null && fieldIndex.get() != ignoreField.getDataIndex(dataBlock)) {
+                dataSimpleComponent((SimpleComponent) component, data, fieldIndex.getAndIncrement(), dataBlock);
+            } else {
+                fieldIndex.getAndIncrement();
+            }
         } else if(component instanceof Vector) {
             // Extract coordinate component
             Object values = data.get(component.getName());
@@ -836,14 +843,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             final int arraySize = component.getComponentCount();
             for (int i = 0; i < arraySize; i++) {
                 DataComponent subComponent = component.getComponent(i);
-                dataBlockFromES(subComponent,  data, dataBlock, fieldIndex);
+                dataBlockFromES(subComponent,  data, dataBlock, fieldIndex, ignoreField);
             }
         } else if(component instanceof DataArray) {
             final int arraySize = component.getComponentCount();
             List dataList = (List) data.get(component.getName());
             for (int i = 0; i < arraySize;i++) {
                 DataComponent subComponent = component.getComponent(i);
-                dataBlockFromES(subComponent, (Map) dataList.get(i), dataBlock, fieldIndex);
+                dataBlockFromES(subComponent, (Map) dataList.get(i), dataBlock, fieldIndex, ignoreField);
             }
         }
     }
@@ -851,7 +858,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     DataBlock dataBlockFromES(DataComponent component, Map data) {
 	    AtomicInteger fieldIndex = new AtomicInteger(0);
 	    DataBlock dataBlock = component.createDataBlock();
-	    dataBlockFromES(component, data, dataBlock, fieldIndex);
+	    ScalarIndexer missingTimeValue = SWEHelper.getTimeStampIndexer(component);
+	    if(missingTimeValue != null && data.containsKey(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)) {
+	        dataBlock.setDoubleValue(missingTimeValue.getDataIndex(dataBlock),
+                    ESDataStoreTemplate.fromEpochMillisecond((Number)data.get(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)));
+        }
+	    dataBlockFromES(component, data, dataBlock, fieldIndex, missingTimeValue);
 	    return dataBlock;
     }
 
@@ -1014,8 +1026,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 
 
-	private void parseDataMapping(XContentBuilder builder, DataComponent dataComponent) throws IOException {
-        if (dataComponent instanceof SimpleComponent) {
+	private void parseDataMapping(XContentBuilder builder, DataComponent dataComponent, DataComponent timeFieldToIgnore) throws IOException {
+        if (dataComponent instanceof SimpleComponent && !dataComponent.equals(timeFieldToIgnore)) {
             switch (((SimpleComponent) dataComponent).getDataType()) {
                 case FLOAT:
                     builder.startObject(dataComponent.getName());
@@ -1076,7 +1088,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         } else if(dataComponent instanceof DataRecord) {
             for(int i = 0; i < dataComponent.getComponentCount(); i++) {
                 DataComponent component = dataComponent.getComponent(i);
-                parseDataMapping(builder, component);
+                parseDataMapping(builder, component, timeFieldToIgnore);
             }
         } else if(dataComponent instanceof DataArray){
             builder.startObject(dataComponent.getName());
@@ -1085,7 +1097,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 builder.field("dynamic", false);
                 builder.startObject("properties");
                 {
-                    parseDataMapping(builder, ((DataArray) dataComponent).getElementType());
+                    parseDataMapping(builder, ((DataArray) dataComponent).getElementType(), timeFieldToIgnore);
                 }
                 builder.endObject();
             }
@@ -1131,6 +1143,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         builder.endObject();
     }
 
+    DataComponent findTimeComponent(DataComponent parent) {
+        ScalarComponent timeStamp = (ScalarComponent)SWEHelper.findComponentByDefinition(parent, SWEConstants.DEF_SAMPLING_TIME);
+        if (timeStamp == null)
+            timeStamp = (ScalarComponent)SWEHelper.findComponentByDefinition(parent, SWEConstants.DEF_PHENOMENON_TIME);
+        if (timeStamp == null)
+            return null;
+        return timeStamp;
+    }
+
     /**
      * @param rsInfo record store metadata
      * @throws IOException
@@ -1150,7 +1171,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 {
                     createDataMappingFields(builder);
                     DataComponent dataComponent = rsInfo.getRecordDescription();
-                    parseDataMapping(builder, dataComponent);
+                    DataComponent timeComponent = findTimeComponent(dataComponent);
+                    parseDataMapping(builder, dataComponent, timeComponent);
                 }
                 builder.endObject();
             }
@@ -1206,9 +1228,13 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         }
     }
 
-    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter) throws IOException {
+    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter,ScalarIndexer ignoreField) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
-            dataComponentSimpleToJson((SimpleComponent) dataComponent, data, fieldCounter.getAndIncrement(), builder);
+            if(ignoreField != null && fieldCounter.get() != ignoreField.getDataIndex(data)) {
+                dataComponentSimpleToJson((SimpleComponent) dataComponent, data, fieldCounter.getAndIncrement(), builder);
+            } else {
+                fieldCounter.getAndIncrement();
+            }
         } else if(dataComponent instanceof Vector) {
             builder.startObject(dataComponent.getName());
             {
@@ -1222,22 +1248,22 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             builder.startArray(dataComponent.getName());
             for (int i = 0; i < compSize; i++) {
                 builder.startObject();
-                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter);
+                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter, ignoreField);
                 builder.endObject();
             }
             builder.endArray();
         } else if(dataComponent instanceof DataRecord) {
             int compSize = dataComponent.getComponentCount();
             for (int i = 0; i < compSize; i++) {
-                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter);
+                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter, ignoreField);
             }
         }
     }
 
-    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder) throws IOException
+    void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, ScalarIndexer ignoreField) throws IOException
     {
         AtomicInteger fieldCounter = new AtomicInteger(0);
-        dataComponentToJson(dataComponent, data, builder, fieldCounter);
+        dataComponentToJson(dataComponent, data, builder, fieldCounter, ignoreField);
     }
 
     void storeRecordIndexRequestFields(XContentBuilder builder, DataKey key) throws IOException {
@@ -1258,7 +1284,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             {
                 storeRecordIndexRequestFields(builder, key);
                 DataComponent dataComponent = info.getRecordDescription();
-                dataComponentToJson(dataComponent, data, builder);
+                ScalarIndexer ignoreField = SWEHelper.getTimeStampIndexer(dataComponent);
+                dataComponentToJson(dataComponent, data, builder, ignoreField);
             }
             builder.endObject();
 
