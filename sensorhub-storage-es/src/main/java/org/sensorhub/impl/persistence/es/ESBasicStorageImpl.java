@@ -820,7 +820,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 	void dataBlockFromES(DataComponent component, Map data, DataBlock dataBlock, AtomicInteger fieldIndex, ScalarIndexer ignoreField) {
         if(component instanceof SimpleComponent) {
-            if(ignoreField != null && fieldIndex.get() != ignoreField.getDataIndex(dataBlock)) {
+            if(ignoreField == null || fieldIndex.get() != ignoreField.getDataIndex(dataBlock)) {
                 dataSimpleComponent((SimpleComponent) component, data, fieldIndex.getAndIncrement(), dataBlock);
             } else {
                 fieldIndex.getAndIncrement();
@@ -1230,7 +1230,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
     void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter,ScalarIndexer ignoreField) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
-            if(ignoreField != null && fieldCounter.get() != ignoreField.getDataIndex(data)) {
+            if(ignoreField == null || fieldCounter.get() != ignoreField.getDataIndex(data)) {
                 dataComponentSimpleToJson((SimpleComponent) dataComponent, data, fieldCounter.getAndIncrement(), builder);
             } else {
                 fieldCounter.getAndIncrement();

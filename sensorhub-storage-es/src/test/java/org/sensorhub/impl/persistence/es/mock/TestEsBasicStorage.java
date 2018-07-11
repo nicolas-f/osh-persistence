@@ -178,7 +178,7 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 
         DataBlock dataBlock = acousticData.createDataBlock();
         int index = 0;
-        dataBlock.setDoubleValue(index++, System.currentTimeMillis() / 1000.);
+        dataBlock.setDoubleValue(index++, 1531297249.125);
         dataBlock.setFloatValue(index++, 45.4f);
         dataBlock.setFloatValue(index++, 44.6f);
         for(float freq : freqs) {
