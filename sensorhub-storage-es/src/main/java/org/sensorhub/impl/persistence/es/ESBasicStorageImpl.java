@@ -846,11 +846,58 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 dataBlockFromES(subComponent,  data, dataBlock, fieldIndex, ignoreField);
             }
         } else if(component instanceof DataArray) {
-            final int arraySize = component.getComponentCount();
+            final int compSize = component.getComponentCount();
             List dataList = (List) data.get(component.getName());
-            for (int i = 0; i < arraySize;i++) {
-                DataComponent subComponent = component.getComponent(i);
-                dataBlockFromES(subComponent, (Map) dataList.get(i), dataBlock, fieldIndex, ignoreField);
+            if(((DataArray) component).getElementType() instanceof ScalarComponent) {
+                // Simple array
+                ScalarComponent scalarComponent = (ScalarComponent)((DataArray) component).getElementType();
+                switch (scalarComponent.getDataType()) {
+                    case FLOAT:
+                    case DOUBLE:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number)dataList.get(ind)).doubleValue());
+                        }
+                        break;
+                    case SHORT:
+                    case USHORT:
+                    case UINT:
+                    case INT:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setIntValue(fieldIndex.getAndIncrement(), ((Number)dataList.get(ind)).intValue());
+                        }
+                        break;
+                    case ASCII_STRING:
+                    case UTF_STRING:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setStringValue(fieldIndex.getAndIncrement(), (String)dataList.get(ind));
+                        }
+                        break;
+                    case BOOLEAN:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setBooleanValue(fieldIndex.getAndIncrement(), (boolean)dataList.get(ind));
+                        }
+                        break;
+                    case ULONG:
+                    case LONG:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setLongValue(fieldIndex.getAndIncrement(), ((Number)dataList.get(ind)).longValue());
+                        }
+                        break;
+                    case UBYTE:
+                    case BYTE:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            dataBlock.setByteValue(fieldIndex.getAndIncrement(), (Byte)dataList.get(ind));
+                        }
+                        break;
+                    default:
+                        logger.error("Unsupported type " + scalarComponent.getDataType().name());
+                }
+            } else {
+                // Complex nested value
+                for (int i = 0; i < compSize; i++) {
+                    DataComponent subComponent = component.getComponent(i);
+                    dataBlockFromES(subComponent, (Map) dataList.get(i), dataBlock, fieldIndex, ignoreField);
+                }
             }
         }
     }
@@ -1091,17 +1138,21 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 parseDataMapping(builder, component, timeFieldToIgnore);
             }
         } else if(dataComponent instanceof DataArray){
-            builder.startObject(dataComponent.getName());
-            {
-                builder.field("type", "nested");
-                builder.field("dynamic", false);
-                builder.startObject("properties");
+            if(((DataArray) dataComponent).getElementType() instanceof SimpleComponent) {
+                parseDataMapping(builder, ((DataArray) dataComponent).getElementType(), timeFieldToIgnore);
+            } else {
+                builder.startObject(dataComponent.getName());
                 {
-                    parseDataMapping(builder, ((DataArray) dataComponent).getElementType(), timeFieldToIgnore);
+                    builder.field("type", "nested");
+                    builder.field("dynamic", false);
+                    builder.startObject("properties");
+                    {
+                        parseDataMapping(builder, ((DataArray) dataComponent).getElementType(), timeFieldToIgnore);
+                    }
+                    builder.endObject();
                 }
                 builder.endObject();
             }
-            builder.endObject();
         } else if(dataComponent instanceof Vector) {
             // Point type
             builder.startObject(dataComponent.getName());
@@ -1220,14 +1271,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             case BYTE:
                 builder.field(component.getName(), data.getByteValue(i));
                 break;
-            case OTHER:
-                builder.field(component.getName(), data.getUnderlyingObject());
-                break;
             default:
                 logger.error("Unsupported type " + data.getDataType(i).name());
         }
     }
-
     void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter,ScalarIndexer ignoreField) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
             if(ignoreField == null || fieldCounter.get() != ignoreField.getDataIndex(data)) {
@@ -1244,14 +1291,68 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             builder.endObject();
             builder.field(dataComponent.getName()+Z_FIELD, data.getDoubleValue(fieldCounter.getAndIncrement()));
         } else if(dataComponent instanceof DataArray) {
-            int compSize = dataComponent.getComponentCount();
-            builder.startArray(dataComponent.getName());
-            for (int i = 0; i < compSize; i++) {
-                builder.startObject();
-                dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter, ignoreField);
-                builder.endObject();
+            // DataArray of scalar values, it is Array of ElasticSearch
+            if(((DataArray) dataComponent).getElementType() instanceof ScalarComponent) {
+                final int compSize = dataComponent.getComponentCount();
+                ScalarComponent scalarComponent = (ScalarComponent) ((DataArray) dataComponent).getElementType();
+                builder.startArray(dataComponent.getName());
+                switch (scalarComponent.getDataType()) {
+                    case FLOAT:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getFloatValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case DOUBLE:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getDoubleValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case SHORT:
+                    case USHORT:
+                    case UINT:
+                    case INT:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getIntValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case ASCII_STRING:
+                    case UTF_STRING:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getStringValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case BOOLEAN:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getBooleanValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case ULONG:
+                    case LONG:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getLongValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    case UBYTE:
+                    case BYTE:
+                        for(int ind = 0; ind < compSize; ind++) {
+                            builder.value(data.getByteValue(fieldCounter.getAndIncrement()));
+                        }
+                        break;
+                    default:
+                        logger.error("Unsupported type " + scalarComponent.getDataType().name());
+                }
+                builder.endArray();
+            } else {
+                // Array of complex type, this is nested document of ElasticSearch
+                int compSize = dataComponent.getComponentCount();
+                builder.startArray(dataComponent.getName());
+                for (int i = 0; i < compSize; i++) {
+                    builder.startObject();
+                    dataComponentToJson(dataComponent.getComponent(i), data, builder, fieldCounter, ignoreField);
+                    builder.endObject();
+                }
+                builder.endArray();
             }
-            builder.endArray();
         } else if(dataComponent instanceof DataRecord) {
             int compSize = dataComponent.getComponentCount();
             for (int i = 0; i < compSize; i++) {
@@ -1278,6 +1379,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         Map<String, EsRecordStoreInfo>  recordStoreInfoMap = getRecordStores();
         EsRecordStoreInfo info = recordStoreInfoMap.get(key.recordType);
         if(info != null) {
+            //ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            //XContentBuilder builder = XContentFactory.jsonBuilder(byteArrayOutputStream);
             XContentBuilder builder = XContentFactory.jsonBuilder();
 
             builder.startObject();
@@ -1290,6 +1393,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             builder.endObject();
 
             request = new IndexRequest(info.getIndexName(), info.name, getRsKey(key));
+
+            //builder.flush();
 
             request.source(builder);
         }
