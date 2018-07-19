@@ -38,6 +38,10 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @DisplayInfo(desc = "ElasticSearch user for authentication (leave blank if not required)")
     public String user = "";
 
+
+	@DisplayInfo(desc="List of additional SSL certificates", label = "Certificates")
+	public List<String> certificatesPath = new ArrayList<>();
+
 	@DisplayInfo(desc = "ElasticSearch password for authentication")
     @DisplayInfo.FieldType(DisplayInfo.FieldType.Type.PASSWORD)
     public String password = "";

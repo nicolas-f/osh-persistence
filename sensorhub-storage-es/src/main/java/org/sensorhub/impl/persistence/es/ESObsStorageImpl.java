@@ -523,7 +523,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 			storeChanged = System.currentTimeMillis();
 
 		} catch (IOException | SensorHubException ex) {
-			logger.error(String.format("storeFoi exception %s:%s in elastic search driver",producerID, foi.getName()), ex);
+			getLogger().error(String.format("storeFoi exception %s:%s in elastic search driver",producerID, foi.getName()), ex);
 		}
 	}
 

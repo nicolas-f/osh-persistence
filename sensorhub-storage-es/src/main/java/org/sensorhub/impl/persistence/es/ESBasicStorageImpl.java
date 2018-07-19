@@ -78,8 +78,13 @@ import org.vast.swe.SWEConstants;
 import org.vast.swe.SWEHelper;
 import org.vast.swe.ScalarIndexer;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -90,6 +95,15 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.cert.PKIXParameters;
+import java.security.cert.TrustAnchor;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -247,13 +261,55 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             RestClientBuilder restClientBuilder = RestClient.builder(hosts);
 
             // Handle authentication
-            if(!config.user.isEmpty()) {
-                final CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-                credentialsProvider.setCredentials(AuthScope.ANY,
-                        new UsernamePasswordCredentials(config.user, config.password));
-                restClientBuilder.setHttpClientConfigCallback(httpClientBuilder ->
-                        httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider));
-            }
+            restClientBuilder.setHttpClientConfigCallback(httpClientBuilder -> {
+                        if(!config.user.isEmpty()) {
+                            CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                            credentialsProvider.setCredentials(AuthScope.ANY,
+                                    new UsernamePasswordCredentials(config.user, config.password));
+                            httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
+                        }
+                        if(!config.certificatesPath.isEmpty()) {
+
+                            try {
+                                KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+                                Path ksPath = Paths.get(System.getProperty("java.home"),
+                                        "lib", "security", "cacerts");
+                                if(Files.exists(ksPath)) {
+                                    keyStore.load(Files.newInputStream(ksPath),
+                                            "changeit".toCharArray());
+                                }
+
+                                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                for(String filePath : config.certificatesPath) {
+                                    File file = new File(filePath);
+                                    if(file.exists()) {
+                                        try (InputStream caInput = new BufferedInputStream(
+                                                // this files is shipped with the application
+                                                new FileInputStream(file))) {
+                                            Certificate crt = cf.generateCertificate(caInput);
+                                            getLogger().info("Added Cert for " + ((X509Certificate) crt)
+                                                    .getSubjectDN());
+
+                                            keyStore.setCertificateEntry(file.getName(), crt);
+                                        }
+                                    } else {
+                                        getLogger().warn("Could not find certificate " + filePath);
+                                    }
+                                }
+                                TrustManagerFactory tmf = TrustManagerFactory
+                                        .getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                                tmf.init(keyStore);
+                                SSLContext sslContext = SSLContext.getInstance("TLS");
+                                sslContext.init(null, tmf.getTrustManagers(), null);
+                                httpClientBuilder.setSSLContext(sslContext);
+                            } catch (Exception e) {
+                                getLogger().error(e.getLocalizedMessage(), e);
+                            }
+                        }
+                        return httpClientBuilder;
+                    }
+            );
+
 			client = new RestHighLevelClient(restClientBuilder);
 		}
 
@@ -273,7 +329,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 createMetaMapping();
             }
         } catch (IOException ex) {
-            logger.error("Cannot create metadata mapping", ex);
+            log.error("Cannot create metadata mapping", ex);
         }
 
         // Retrieve store info
@@ -462,7 +518,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             bulkProcessor.add(request);
 
         } catch (IOException ex) {
-            logger.error(String.format("storeDataSourceDescription exception %s in elastic search driver", process.getId()), ex);
+            getLogger().error(String.format("storeDataSourceDescription exception %s in elastic search driver", process.getId()), ex);
         }
         return true;
 	}
@@ -635,7 +691,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     createDataMapping(rsInfo);
                 }
             } catch (IOException ex) {
-                logger.error("Cannot create metadata mapping", ex);
+                getLogger().error("Cannot create metadata mapping", ex);
             }
 
             storeChanged = System.currentTimeMillis();
@@ -643,7 +699,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
             refreshIndex();
 
         } catch (IOException ex) {
-            logger.error(String.format("addRecordStore exception %s:%s in elastic search driver",name, recordStructure.getName()), ex);
+            getLogger().error(String.format("addRecordStore exception %s:%s in elastic search driver",name, recordStructure.getName()), ex);
         }
 	}
 
@@ -663,7 +719,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 try {
                     return Math.toIntExact(response.getHits().getTotalHits());
                 } catch (ArithmeticException ex) {
-                    logger.error("Too many records");
+                    getLogger().error("Too many records");
                     return Integer.MAX_VALUE;
                 }
             } catch (IOException | ElasticsearchStatusException ex) {
@@ -814,7 +870,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 dataBlock.setByteValue(i, ((Number)data.get(dataComponent.getName())).byteValue());
                 break;
             default:
-                logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+                getLogger().error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
         }
     }
 
@@ -890,7 +946,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                         }
                         break;
                     default:
-                        logger.error("Unsupported type " + scalarComponent.getDataType().name());
+                        getLogger().error("Unsupported type " + scalarComponent.getDataType().name());
                 }
             } else {
                 // Complex nested value
@@ -1061,7 +1117,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 try {
                     return Math.toIntExact(Math.min(response.getHits().getTotalHits(), maxCount));
                 } catch (ArithmeticException ex) {
-                    logger.error("Too many records");
+                    getLogger().error("Too many records");
                     return Integer.MAX_VALUE;
                 }
             } catch (IOException | ElasticsearchStatusException ex) {
@@ -1130,7 +1186,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     builder.endObject();
                     break;
                 default:
-                    logger.error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
+                    getLogger().error("Unsupported type " + ((SimpleComponent) dataComponent).getDataType());
             }
         } else if(dataComponent instanceof DataRecord) {
             for(int i = 0; i < dataComponent.getComponentCount(); i++) {
@@ -1272,7 +1328,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 builder.field(component.getName(), data.getByteValue(i));
                 break;
             default:
-                logger.error("Unsupported type " + data.getDataType(i).name());
+                getLogger().error("Unsupported type " + data.getDataType(i).name());
         }
     }
     void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter,ScalarIndexer ignoreField) throws IOException {
@@ -1339,7 +1395,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                         }
                         break;
                     default:
-                        logger.error("Unsupported type " + scalarComponent.getDataType().name());
+                        getLogger().error("Unsupported type " + scalarComponent.getDataType().name());
                 }
                 builder.endArray();
             } else {
@@ -1570,7 +1626,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         try {
             client.indices().refresh(refreshRequest);
         } catch (IOException ex) {
-            logger.error("Error while refreshIndex", ex);
+            getLogger().error("Error while refreshIndex", ex);
         }
 	}
 
