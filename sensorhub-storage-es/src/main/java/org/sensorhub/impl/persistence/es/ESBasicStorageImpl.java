@@ -698,6 +698,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
             refreshIndex();
 
+
         } catch (IOException ex) {
             getLogger().error(String.format("addRecordStore exception %s:%s in elastic search driver",name, recordStructure.getName()), ex);
         }
@@ -1620,13 +1621,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	 * Refreshes the index.
 	 */
 	protected void refreshIndex() {
-        log.info("ESBasicStorageImpl:refreshIndex");
         bulkProcessor.flush();
-        RefreshRequest refreshRequest = new RefreshRequest();
-        try {
-            client.indices().refresh(refreshRequest);
-        } catch (IOException ex) {
-            getLogger().error("Error while refreshIndex", ex);
+
+        if(config.autoRefresh) {
+            RefreshRequest refreshRequest = new RefreshRequest();
+            try {
+                client.indices().refresh(refreshRequest);
+            } catch (IOException ex) {
+                getLogger().error("Error while refreshIndex", ex);
+            }
         }
 	}
 

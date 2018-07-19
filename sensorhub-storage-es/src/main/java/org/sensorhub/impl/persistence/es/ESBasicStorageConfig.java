@@ -38,6 +38,8 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @DisplayInfo(desc = "ElasticSearch user for authentication (leave blank if not required)")
     public String user = "";
 
+    @DisplayInfo(desc = "Refresh store on commit. Require indices:admin/refresh rights")
+    public boolean autoRefresh = true;
 
 	@DisplayInfo(desc="List of additional SSL certificates", label = "Certificates")
 	public List<String> certificatesPath = new ArrayList<>();
