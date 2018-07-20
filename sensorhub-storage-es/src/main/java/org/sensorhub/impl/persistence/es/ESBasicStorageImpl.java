@@ -26,6 +26,7 @@ import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.entity.ContentType;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.nio.entity.NStringEntity;
@@ -310,6 +311,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     }
             );
 
+            restClientBuilder.setRequestConfigCallback(new RestClientBuilder.RequestConfigCallback() {
+                @Override
+                public RequestConfig.Builder customizeRequestConfig(RequestConfig.Builder requestConfigBuilder) {
+                    return requestConfigBuilder.setConnectTimeout(config.connectTimeout).setSocketTimeout(config.socketTimeout);
+                }
+            });
+
+            restClientBuilder.setMaxRetryTimeoutMillis(config.maxRetryTimeout);
+
 			client = new RestHighLevelClient(restClientBuilder);
 		}
 
@@ -317,8 +327,6 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 .setBulkSize(new ByteSizeValue(config.bulkSize, ByteSizeUnit.MB))
                 .setFlushInterval(TimeValue.timeValueSeconds(config.bulkFlushInterval))
                 .setConcurrentRequests(config.bulkConcurrentRequests)
-                .setBackoffPolicy(
-                        BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(100), 3))
                 .build();
 
 		// Check if metadata mapping must be defined

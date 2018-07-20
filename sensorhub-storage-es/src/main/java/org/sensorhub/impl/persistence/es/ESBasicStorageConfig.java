@@ -63,21 +63,18 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
 	@DisplayInfo(desc="MWhen scrolling, the number of results fetched by each Elasticsearch call")
     public int scrollFetchSize = 10;
 	
-	@DisplayInfo(desc="When scrolling, the minimum number of previous results kept in memory at any time")
-	public int scrollBacktrackingWindowSize = 10000;
-		
-	@DisplayInfo(desc="Set to true to ignore cluster name validation of connected nodes")
-	public boolean ignoreClusterName = false;
-	
-	@DisplayInfo(desc="The time to wait for a ping response from a node")
-	public int pingTimeout = 5;
-	
-	@DisplayInfo(desc="How often to sample / ping the nodes listed and connected")
-	public int nodeSamplerInterval = 5;
-	
-	@DisplayInfo(desc="Enable sniffing")
-	public boolean transportSniff = false;
-	
+	@DisplayInfo(desc="Determines the timeout in milliseconds until a connection is established. A timeout value of zero is interpreted as an infinite timeout.")
+	@DisplayInfo.ValueRange(min = 0)
+	public int connectTimeout = 5000;
+
+	@DisplayInfo(desc="Defines the socket timeout (SO_TIMEOUT) in milliseconds, which is the timeout for waiting for data or, put differently, a maximum period inactivity between two consecutive data packets).")
+	@DisplayInfo.ValueRange(min = 0)
+	public int socketTimeout = 60000;
+
+	@DisplayInfo(desc="Sets the maximum timeout (in milliseconds) to honour in case of multiple retries of the same request.")
+	@DisplayInfo.ValueRange(min = 0)
+	public int maxRetryTimeout = 60000;
+
 	@DisplayInfo(desc="Set the number of concurrent requests")
 	public int bulkConcurrentRequests = 10;
 	
