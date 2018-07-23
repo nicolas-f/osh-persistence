@@ -20,6 +20,7 @@ import net.opengis.gml.v32.AbstractGeometry;
 import net.opengis.gml.v32.impl.EnvelopeJTS;
 import net.opengis.gml.v32.impl.PointJTS;
 import net.opengis.gml.v32.impl.PolygonJTS;
+import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
@@ -34,6 +35,8 @@ import org.elasticsearch.common.xcontent.*;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.RangeQueryBuilder;
+import org.elasticsearch.index.query.TermQueryBuilder;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.metrics.geobounds.ParsedGeoBounds;
@@ -64,9 +67,7 @@ import java.util.Map;
 public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageModule<ESBasicStorageConfig> {
 
 	private static final String POLYGON_QUERY_ERROR_MSG = "Cannot build polygon geo query";
-    private static final String NO_PARENT_VALUE = "-1";
 	private static final String RESULT_TIME_FIELD_NAME = "resultTime";
-	private static final String SAMPLING_GEOMETRY_FIELD_NAME = "geom";
 	protected static final String FOI_IDX_NAME = "foi";
 	protected static final String GEOBOUNDS_IDX_NAME = "geobounds";
 	protected static final String FOI_UNIQUE_ID_FIELD = "foiID";
@@ -119,9 +120,10 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 	/**
 	 * Overload query builder in order to manage IObsFilter
-	 * @param obsFilter
+	 * @param filter Filter results
 	 * @return
 	 */
+	@Override
     BoolQueryBuilder queryByFilter(IDataFilter filter) {
 	    BoolQueryBuilder queryBuilder = super.queryByFilter(filter);
 	    if(filter instanceof ObsFilter) {
@@ -145,42 +147,58 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
         return queryBuilder;
     }
 
+    BoolQueryBuilder queryByFilter(IFoiFilter filter) {
+        BoolQueryBuilder query = QueryBuilders.boolQuery();
+
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
+
+        // check if any producerIDs
+        if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
+            query.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
+        }
+
+
+        // filter on Foi
+        if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
+            query.must(QueryBuilders.termsQuery("_id", filter.getFeatureIDs()));
+        }
+
+        // filter on roi?
+        if (filter.getRoi() != null) {
+            try {
+                // build geo query
+                query.must(getPolygonGeoQuery(filter.getRoi()));
+            } catch (IOException e) {
+                log.error(POLYGON_QUERY_ERROR_MSG, e);
+            }
+        }
+        return query;
+    }
 
 	@Override
 	public synchronized int getNumFois(IFoiFilter filter) {
-		return 0;
-//		// build query
-//		// aggregate queries
-//
-//		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
-//		// filter on feature ids?
-//		if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(FOI_UNIQUE_ID_FIELD, filter.getFeatureIDs()));
-//		}
-//
-//		// filter on producer ids
-//		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-//			filterQueryBuilder.must(QueryBuilders.termsQuery(PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-//		}
-//
-//		// filter on ROI
-//		if (filter.getRoi() != null) {
-//			try {
-//				// build geo query from filter ROI
-//				filterQueryBuilder.must(getPolygonGeoQuery(filter.getRoi()));
-//			} catch (IOException e) {
-//				log.error(POLYGON_QUERY_ERROR_MSG, e);
-//			}
-//		}
-//
-//		// build the request
-//		final SearchRequestBuilder scrollReq = client.prepareSearch(indexNamePrepend)
-//				.setTypes("_doc")
-//				.setQuery(filterQueryBuilder)
-//				.setFetchSource(new String[] {}, new String[] {"*"});
-//
-//		// return the number of total hits
-//		return (int) scrollReq.get().getHits().getTotalHits();
+
+	    int result = 0;
+
+		BoolQueryBuilder queryBuilder = queryByFilter(filter);
+
+        SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
+        searchRequest.source(new SearchSourceBuilder().size(0)
+                .query(queryBuilder));
+        try {
+            SearchResponse response = client.search(searchRequest);
+            try {
+                result = Math.toIntExact(response.getHits().getTotalHits());
+            } catch (ArithmeticException ex) {
+                getLogger().error("Too many records");
+                result = Integer.MAX_VALUE;
+            }
+        } catch (IOException | ElasticsearchStatusException ex) {
+            log.error("getRecordStores failed", ex);
+        }
+		return result;
 	}
 
 	@Override
@@ -196,10 +214,12 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
             Object obj = response.getAggregations().asMap().get("agg");
             if(obj instanceof ParsedGeoBounds) {
                 ParsedGeoBounds geoBounds = (ParsedGeoBounds) obj;
-                foiExtent = new Bbox(geoBounds.topLeft().getLon(),
-                        geoBounds.bottomRight().getLat(),0,
-                        geoBounds.bottomRight().getLon(),
-                        geoBounds.topLeft().getLat(),0);
+                if(geoBounds.bottomRight() != null && geoBounds.topLeft() != null) {
+					foiExtent = new Bbox(geoBounds.topLeft().getLon(),
+							geoBounds.bottomRight().getLat(), 0,
+							geoBounds.bottomRight().getLon(),
+							geoBounds.topLeft().getLat(), 0);
+				}
             }
         } catch (IOException ex) {
 	        log.error(ex.getLocalizedMessage(), ex);
@@ -264,28 +284,7 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 
 		// build query
 		// aggregate queries
-		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
-
-		filterQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
-
-		// filter on producer ids?
-		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {
-			filterQueryBuilder.must(QueryBuilders.termsQuery(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME, filter.getProducerIDs()));
-		}
-
-		if(filter.getFeatureIDs() != null && !filter.getFeatureIDs().isEmpty()) {
-			filterQueryBuilder.must(QueryBuilders.termsQuery("_id" ,filter.getFeatureIDs().toArray(new String[filter.getFeatureIDs().size()])));
-		}
-
-		// filter on roi?
-		if (filter.getRoi() != null) {
-			try {
-				// build geo query
-				filterQueryBuilder.must(getPolygonGeoQuery(filter.getRoi()));
-			} catch (IOException e) {
-				log.error(POLYGON_QUERY_ERROR_MSG, e);
-			}
-		}
+		BoolQueryBuilder filterQueryBuilder = queryByFilter(filter);
 
 		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
 		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
@@ -422,7 +421,10 @@ public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageM
 		// aggregate queries
 		BoolQueryBuilder filterQueryBuilder = QueryBuilders.boolQuery();
 
-		filterQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+
+        if(config.filterByStorageId) {
+            filterQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
 
 		// filter on producer ids?
 		if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {

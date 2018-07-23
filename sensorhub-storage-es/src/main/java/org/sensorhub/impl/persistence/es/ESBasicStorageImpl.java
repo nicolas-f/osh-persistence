@@ -421,9 +421,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         AbstractProcess result = null;
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        QueryBuilder query = QueryBuilders.boolQuery()
-                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+        BoolQueryBuilder query = QueryBuilders.boolQuery()
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION));
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
         searchSourceBuilder.query(query);
         searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
         searchSourceBuilder.size(1);
@@ -447,10 +449,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        QueryBuilder query = QueryBuilders.boolQuery()
-                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+        BoolQueryBuilder query = QueryBuilders.boolQuery()
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION))
                 .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(ESDataStoreTemplate.toEpochMillisecond(startTime)).to(ESDataStoreTemplate.toEpochMillisecond(endTime)).format("epoch_millis"));
+
+
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
+
         searchSourceBuilder.query(query);
         searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
         searchSourceBuilder.size(config.scrollFetchSize);
@@ -484,10 +491,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         AbstractProcess result = null;
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        QueryBuilder query = QueryBuilders.boolQuery()
-                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+        BoolQueryBuilder query = QueryBuilders.boolQuery()
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_DESCRIPTION))
                 .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).from(0).to(Double.valueOf(time * 1000).longValue()));
+
+
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
+
         searchSourceBuilder.query(query);
         searchSourceBuilder.sort(new FieldSortBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME).order(SortOrder.DESC));
         searchSourceBuilder.size(1);
@@ -615,9 +627,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        QueryBuilder query = QueryBuilders.boolQuery()
-                .must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
+        BoolQueryBuilder query = QueryBuilders.boolQuery()
                 .must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, METADATA_TYPE_RECORD_STORE));
+
+
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
+
         searchSourceBuilder.query(query);
         // Default to 10 results
         searchSourceBuilder.size(config.scrollFetchSize);
@@ -724,9 +741,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         EsRecordStoreInfo info = recordStoreInfoMap.get(recordType);
         if(info != null) {
             SearchRequest searchRequest = new SearchRequest(info.indexName);
-            searchRequest.source(new SearchSourceBuilder().size(0)
-                    .query(new BoolQueryBuilder()
-                            .must(new TermQueryBuilder(STORAGE_ID_FIELD_NAME, config.id))));
+            SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder().size(0);
+            searchRequest.source(searchSourceBuilder);
+            if(config.filterByStorageId) {
+                searchSourceBuilder.query(new BoolQueryBuilder().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id)));
+            }
+
             try {
                 SearchResponse response = client.search(searchRequest);
                 try {
@@ -792,9 +812,13 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         if (info != null) {
             SearchRequest searchRequest = new SearchRequest(info.indexName);
             SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-            searchSourceBuilder.query(QueryBuilders.boolQuery().must(
-                    QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
-                    .must(QueryBuilders.rangeQuery(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
+            BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+
+            if(config.filterByStorageId) {
+                searchSourceBuilder.query(boolQueryBuilder.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id)));
+            }
+
+            searchSourceBuilder.query(boolQueryBuilder.must(QueryBuilders.rangeQuery(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
                             .from(ESDataStoreTemplate.toEpochMillisecond(System.currentTimeMillis() - TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE)).format("epoch_millis")));
             searchSourceBuilder.size(config.scrollFetchSize);
             searchSourceBuilder.fetchSource(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME, null);
@@ -1525,10 +1549,15 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
     BoolQueryBuilder queryByFilter(IDataFilter filter) {
         double[] timeRange = getTimeRange(filter);
 
-        BoolQueryBuilder query = QueryBuilders.boolQuery().must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id))
-                .must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
-                        .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
-                        .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])).format("epoch_millis"));
+        BoolQueryBuilder query = QueryBuilders.boolQuery();
+
+        if(config.filterByStorageId) {
+            query.must(QueryBuilders.termQuery(STORAGE_ID_FIELD_NAME, config.id));
+        }
+
+        query.must(new RangeQueryBuilder(ESDataStoreTemplate.TIMESTAMP_FIELD_NAME)
+                .from(ESDataStoreTemplate.toEpochMillisecond(timeRange[0]))
+                .to(ESDataStoreTemplate.toEpochMillisecond(timeRange[1])).format("epoch_millis"));
 
         // check if any producerIDs
         if(filter.getProducerIDs() != null && !filter.getProducerIDs().isEmpty()) {

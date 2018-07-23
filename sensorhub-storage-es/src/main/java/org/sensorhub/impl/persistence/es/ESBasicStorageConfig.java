@@ -41,6 +41,9 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
     @DisplayInfo(desc = "Refresh store on commit. Require indices:admin/refresh rights")
     public boolean autoRefresh = true;
 
+	@DisplayInfo(desc = "Multiple storage instance can use the same index. If the filtering is disabled this driver will see all sensors (should be used only for read-only SOS service)")
+	public boolean filterByStorageId = true;
+
 	@DisplayInfo(desc="List of additional SSL certificates", label = "Certificates")
 	public List<String> certificatesPath = new ArrayList<>();
 
