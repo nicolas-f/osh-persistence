@@ -93,4 +93,7 @@ public class ESBasicStorageConfig extends org.sensorhub.api.persistence.ObsStora
         indexNamePrepend = name;
     }
 
+    @DisplayInfo(desc = "Bulk insertion may fail, client will resend in case of TimeOut exception. Retry is disabled by default in order to avoid overflow of ElasticSearch cluster")
+	public int maxBulkRetry = 0;
+
 }

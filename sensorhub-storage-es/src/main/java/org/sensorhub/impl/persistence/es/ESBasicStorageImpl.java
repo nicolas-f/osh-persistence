@@ -32,10 +32,10 @@ import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.nio.entity.NStringEntity;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.ElasticsearchStatusException;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
-import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
@@ -74,7 +74,6 @@ import org.sensorhub.api.persistence.StorageException;
 import org.sensorhub.impl.module.AbstractModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.vast.data.DataBlockParallel;
 import org.vast.swe.SWEConstants;
 import org.vast.swe.SWEHelper;
 import org.vast.swe.ScalarIndexer;
@@ -92,6 +91,7 @@ import java.io.OutputStream;
 import java.lang.Boolean;
 import java.net.InetAddress;
 import java.net.MalformedURLException;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.net.UnknownHostException;
@@ -100,10 +100,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
-import java.security.cert.PKIXParameters;
-import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -112,6 +112,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -179,7 +181,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	String indexNamePrepend;
 	String indexNameMetaData;
 
-    BulkListener bulkListener = new BulkListener();
+    BulkListener bulkListener;
 
 	
 	public ESBasicStorageImpl() {
@@ -322,6 +324,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
 			client = new RestHighLevelClient(restClientBuilder);
 		}
+
+		bulkListener = new BulkListener(client, config.maxBulkRetry, 50);
 
         bulkProcessor = BulkProcessor.builder(client::bulkAsync, bulkListener).setBulkActions(config.bulkActions)
                 .setBulkSize(new ByteSizeValue(config.bulkSize, ByteSizeUnit.MB))
@@ -1654,6 +1658,25 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
     private static final class BulkListener implements BulkProcessor.Listener {
 	    Logger logger = LoggerFactory.getLogger(BulkListener.class);
+	    RestHighLevelClient client;
+	    private int maxRetry;
+	    private int retryDelay;
+        MessageDigest messageDigest;
+
+        public BulkListener(RestHighLevelClient client, int max_retry, int retryDelay) {
+            this.client = client;
+            this.maxRetry = max_retry;
+            this.retryDelay = retryDelay;
+
+            try {
+                messageDigest = MessageDigest.getInstance("SHA-256");
+            } catch (NoSuchAlgorithmException ignored) {
+
+            }
+        }
+
+        private Map<String, Integer> bulkRetries = new HashMap<>();
+
 
         @Override
         public void beforeBulk(long executionId, BulkRequest request) {
@@ -1665,8 +1688,39 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         }
 
+
+
         @Override
         public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
+            if(failure instanceof SocketTimeoutException && request != null) {
+                // Retry to send the bulk later
+                messageDigest.reset();
+                messageDigest.update(request.getDescription().getBytes());
+                String hash = new String(messageDigest.digest());
+                Integer retries = bulkRetries.get(hash);
+                if(retries == null || retries < maxRetry) {
+                    log.info("Retry send bulk request", failure);
+                    bulkRetries.put(hash, (retries == null ? 0 : retries) + 1);
+                    new Timer().schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            client.bulkAsync(request, new ActionListener<BulkResponse>() {
+                                @Override
+                                public void onResponse(BulkResponse bulkItemResponses) {
+
+                                }
+
+                                @Override
+                                public void onFailure(Exception e) {
+                                    afterBulk(-1, request, e);
+                                }
+                            });
+
+                        }
+                    }, retryDelay);
+                    return;
+                }
+            }
             logger.error("Exception while pushing data to ElasticSearch", failure);
         }
     }
