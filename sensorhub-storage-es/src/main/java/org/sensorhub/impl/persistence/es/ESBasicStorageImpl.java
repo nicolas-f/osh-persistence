@@ -239,91 +239,90 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	@Override
 	public synchronized void start() throws SensorHubException {
 	    log.info("ESBasicStorageImpl:start");
-		if(client == null) {
-			// init transport client
-			HttpHost[] hosts = new HttpHost[config.nodeUrls.size()];
-            int i=0;
-            for(String nodeUrl : config.nodeUrls){
-                try {
-                    URL url = null;
-                    // <host>:<port>
-                    if(nodeUrl.startsWith("http")){
-                        url = new URL(nodeUrl);
-                    } else {
-                        url = new URL("http://"+nodeUrl);
-                    }
 
-                    hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
-
-                } catch (MalformedURLException | UnknownHostException e) {
-                    log.error("Cannot initialize transport address:"+e.getMessage());
-                    throw new SensorHubException("Cannot initialize transport address",e);
+        // init transport client
+        HttpHost[] hosts = new HttpHost[config.nodeUrls.size()];
+        int i=0;
+        for(String nodeUrl : config.nodeUrls){
+            try {
+                URL url = null;
+                // <host>:<port>
+                if(nodeUrl.startsWith("http")){
+                    url = new URL(nodeUrl);
+                } else {
+                    url = new URL("http://"+nodeUrl);
                 }
+
+                hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
+
+            } catch (MalformedURLException | UnknownHostException e) {
+                log.error("Cannot initialize transport address:"+e.getMessage());
+                throw new SensorHubException("Cannot initialize transport address",e);
             }
+        }
 
-            RestClientBuilder restClientBuilder = RestClient.builder(hosts);
+        RestClientBuilder restClientBuilder = RestClient.builder(hosts);
 
-            // Handle authentication
-            restClientBuilder.setHttpClientConfigCallback(httpClientBuilder -> {
-                        if(!config.user.isEmpty()) {
-                            CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-                            credentialsProvider.setCredentials(AuthScope.ANY,
-                                    new UsernamePasswordCredentials(config.user, config.password));
-                            httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
-                        }
-                        if(!config.certificatesPath.isEmpty()) {
-
-                            try {
-                                KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
-                                Path ksPath = Paths.get(System.getProperty("java.home"),
-                                        "lib", "security", "cacerts");
-                                if(Files.exists(ksPath)) {
-                                    keyStore.load(Files.newInputStream(ksPath),
-                                            "changeit".toCharArray());
-                                }
-
-                                CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                                for(String filePath : config.certificatesPath) {
-                                    File file = new File(filePath);
-                                    if(file.exists()) {
-                                        try (InputStream caInput = new BufferedInputStream(
-                                                // this files is shipped with the application
-                                                new FileInputStream(file))) {
-                                            Certificate crt = cf.generateCertificate(caInput);
-                                            getLogger().info("Added Cert for " + ((X509Certificate) crt)
-                                                    .getSubjectDN());
-
-                                            keyStore.setCertificateEntry(file.getName(), crt);
-                                        }
-                                    } else {
-                                        getLogger().warn("Could not find certificate " + filePath);
-                                    }
-                                }
-                                TrustManagerFactory tmf = TrustManagerFactory
-                                        .getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                                tmf.init(keyStore);
-                                SSLContext sslContext = SSLContext.getInstance("TLS");
-                                sslContext.init(null, tmf.getTrustManagers(), null);
-                                httpClientBuilder.setSSLContext(sslContext);
-                            } catch (Exception e) {
-                                getLogger().error(e.getLocalizedMessage(), e);
-                            }
-                        }
-                        return httpClientBuilder;
+        // Handle authentication
+        restClientBuilder.setHttpClientConfigCallback(httpClientBuilder -> {
+                    if(!config.user.isEmpty()) {
+                        CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                        credentialsProvider.setCredentials(AuthScope.ANY,
+                                new UsernamePasswordCredentials(config.user, config.password));
+                        httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
                     }
-            );
+                    if(!config.certificatesPath.isEmpty()) {
 
-            restClientBuilder.setRequestConfigCallback(new RestClientBuilder.RequestConfigCallback() {
-                @Override
-                public RequestConfig.Builder customizeRequestConfig(RequestConfig.Builder requestConfigBuilder) {
-                    return requestConfigBuilder.setConnectTimeout(config.connectTimeout).setSocketTimeout(config.socketTimeout);
+                        try {
+                            KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+                            Path ksPath = Paths.get(System.getProperty("java.home"),
+                                    "lib", "security", "cacerts");
+                            if(Files.exists(ksPath)) {
+                                keyStore.load(Files.newInputStream(ksPath),
+                                        "changeit".toCharArray());
+                            }
+
+                            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                            for(String filePath : config.certificatesPath) {
+                                File file = new File(filePath);
+                                if(file.exists()) {
+                                    try (InputStream caInput = new BufferedInputStream(
+                                            // this files is shipped with the application
+                                            new FileInputStream(file))) {
+                                        Certificate crt = cf.generateCertificate(caInput);
+                                        getLogger().info("Added Cert for " + ((X509Certificate) crt)
+                                                .getSubjectDN());
+
+                                        keyStore.setCertificateEntry(file.getName(), crt);
+                                    }
+                                } else {
+                                    getLogger().warn("Could not find certificate " + filePath);
+                                }
+                            }
+                            TrustManagerFactory tmf = TrustManagerFactory
+                                    .getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                            tmf.init(keyStore);
+                            SSLContext sslContext = SSLContext.getInstance("TLS");
+                            sslContext.init(null, tmf.getTrustManagers(), null);
+                            httpClientBuilder.setSSLContext(sslContext);
+                        } catch (Exception e) {
+                            getLogger().error(e.getLocalizedMessage(), e);
+                        }
+                    }
+                    return httpClientBuilder;
                 }
-            });
+        );
 
-            restClientBuilder.setMaxRetryTimeoutMillis(config.maxRetryTimeout);
+        restClientBuilder.setRequestConfigCallback(new RestClientBuilder.RequestConfigCallback() {
+            @Override
+            public RequestConfig.Builder customizeRequestConfig(RequestConfig.Builder requestConfigBuilder) {
+                return requestConfigBuilder.setConnectTimeout(config.connectTimeout).setSocketTimeout(config.socketTimeout);
+            }
+        });
 
-			client = new RestHighLevelClient(restClientBuilder);
-		}
+        restClientBuilder.setMaxRetryTimeoutMillis(config.maxRetryTimeout);
+
+        client = new RestHighLevelClient(restClientBuilder);
 
 		bulkListener = new BulkListener(client, config.maxBulkRetry, 50);
 

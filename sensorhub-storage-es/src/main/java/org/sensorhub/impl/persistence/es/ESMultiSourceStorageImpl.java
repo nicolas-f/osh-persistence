@@ -66,7 +66,16 @@ public class ESMultiSourceStorageImpl extends ESObsStorageImpl implements IMulti
 		SearchRequest searchRequest = new SearchRequest(indexNameMetaData);
 		SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 		sourceBuilder.size(0); // Do not get hits
-		sourceBuilder.query(new BoolQueryBuilder().must(new TermQueryBuilder(STORAGE_ID_FIELD_NAME, config.id)).must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, FOI_IDX_NAME)));
+		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+
+		if(config.filterByStorageId) {
+			boolQueryBuilder.must(new TermQueryBuilder(STORAGE_ID_FIELD_NAME, config.id));
+		}
+
+		boolQueryBuilder.must(new TermQueryBuilder(METADATA_TYPE_FIELD_NAME, FOI_IDX_NAME));
+
+		sourceBuilder.query(boolQueryBuilder);
+
 		sourceBuilder.aggregation(new TermsAggregationBuilder(aggregateName, ValueType.STRING).field(ESDataStoreTemplate.PRODUCER_ID_FIELD_NAME));
 		searchRequest.source(sourceBuilder);
 		try {
