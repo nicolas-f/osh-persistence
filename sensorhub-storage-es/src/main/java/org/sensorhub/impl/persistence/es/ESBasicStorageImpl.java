@@ -1495,6 +1495,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
     @Override
 	public void storeRecord(DataKey key, DataBlock data) {
+        if(key.producerID == null || key.producerID.isEmpty()) {
+            getLogger().info("Missing producerID data " + key.recordType);
+            return;
+        }
         try {
             IndexRequest request = storeRecordIndexRequest(key, data);
             if(request != null) {

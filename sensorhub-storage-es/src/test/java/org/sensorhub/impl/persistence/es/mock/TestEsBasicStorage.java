@@ -26,6 +26,7 @@ import net.opengis.swe.v20.DataType;
 import net.opengis.swe.v20.Vector;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.locationtech.jts.geom.Coordinate;
@@ -102,7 +103,20 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
         // if some tests are not passed,  try to increase this value first!!
         storage.commit();
     }
+    public static void assertDataBlockEquals(DataBlock data1, DataBlock data2) throws Exception {
+        Assert.assertEquals("Data blocks are not the same size", (long)data1.getAtomCount(), (long)data2.getAtomCount());
 
+        for(int i = 0; i < data1.getAtomCount(); ++i) {
+            Assert.assertEquals(data1.getDataType(i), data2.getDataType(i));
+
+            if(data1.getDataType(i) == DataType.DOUBLE || data1.getDataType(i) == DataType.FLOAT) {
+                Assert.assertEquals(data1.getDoubleValue(i), data2.getDoubleValue(i), 1e-6);
+            } else {
+                Assert.assertEquals("Data blocks values are not equal at index=" + i, data1.getStringValue(i), data2.getStringValue(i));
+            }
+        }
+
+    }
     @Test
     public void testLocationOutput() throws Exception {
         GeoPosHelper fac = new GeoPosHelper();
@@ -138,7 +152,7 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
         });
         int i = 0;
         while (it.hasNext()) {
-            TestUtils.assertEquals(dataBlock, it.next().getData());
+            assertDataBlockEquals(dataBlock, it.next().getData());
             i++;
         }
         assertEquals(1, i);
