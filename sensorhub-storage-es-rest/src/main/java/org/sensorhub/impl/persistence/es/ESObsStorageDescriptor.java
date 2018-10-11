@@ -26,6 +26,7 @@ import org.sensorhub.impl.module.JarModuleProvider;
  * </p>
  *
  * @author Mathieu Dhainaut <mathieu.dhainaut@gmail.com>
+ * @author Nicolas Fortin, UMRAE Ifsttar
  * @since 2017
  */
 public class ESObsStorageDescriptor extends JarModuleProvider implements IModuleProvider{

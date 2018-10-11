@@ -34,6 +34,7 @@ import org.slf4j.LoggerFactory;
  * </p>
  *
  * @author Mathieu Dhainaut <mathieu.dhainaut@gmail.com>
+ * @author Nicolas Fortin, UMRAE Ifsttar
  * @since 2017
  */
 public class ESIterator implements Iterator<SearchHit>{

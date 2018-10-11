@@ -123,6 +123,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </p>
  *
  * @author Mathieu Dhainaut <mathieu.dhainaut@gmail.com>
+ * @author Nicolas Fortin, UMRAE Ifsttar
  * @since 2017
  */
 public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> implements IRecordStorageModule<ESBasicStorageConfig> {

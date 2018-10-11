@@ -1,8 +1,15 @@
 # Elasticsearch storage implementation
 
-This is a storage module allowing one to store and retrieve data to/from an elasticsearch server. It uses the elasticsearch
-Java API 5.2 [link](https://www.elastic.co/guide/en/elasticsearch/client/java-api/current/index.html).
+This is a storage module allowing one to store and retrieve data to/from an elasticsearch V6+ server. It uses the elasticsearch
+ Java High Level REST Client [link](https://www.elastic.co/guide/en/elasticsearch/client/java-rest/current/java-rest-high.html).
 
+The difference with the repository sensorhub-storage-es is:
+ 
+ - Java High Level REST Client, which executes HTTP requests rather than serialized Java requests
+ - Convert data frame into ElasticSearch data component instead of obfuscating into a Java Serialized Object. (except for the OSH MetaData)
+ 
+ The driver that create ElasticSearch index may not support your DataComponent, in this case create an issue with the specification of your unsupported DataComponent. (Missing fields)
+ 
 Three main OSH interfaces have been implemented: 
 1. IRecordStorageModule
 2. IObsStorageModule
@@ -10,157 +17,91 @@ Three main OSH interfaces have been implemented:
 
 ## Main classes
 
-![alt text][classdiagram]
-
 An iterator wrapper class has been used to wrap scroll response without specify the scroll id every times. The ESIterator takes care 
 about making new requests with the specify scrollID when it necessary. 
 
 A bulk processor is in charge of sending create/update/delete requests. The BulkProcessor class offers a simple interface to flush bulk operations automatically based on the number or size of requests, or after a given period. 
 
-A transport client The TransportClient connects remotely to an Elasticsearch cluster using the transport module. It does not join the cluster, 
-but simply gets one or more initial transport addresses and communicates with them in round robin fashion on each action.
-
 Some settings are available through the ESBasicStorageConfig class:
-1. scrollMaxDuration: when scrolling, the maximum duration ScrollableResults will be usable if no other results are fetched from, in ms (default is 6000)
-2. scrollFetchSize: when scrolling, the number of results fetched by each Elasticsearch call (default is 2)
-3. scrollBacktrackingWindowSize: when scrolling, the minimum number of previous results kept in memory at any time  (default is 10000)
-4. nodeUrls: list of nodes under the format <host>:<port>
-5. ignoreClusterName: set to true to ignore cluster name validation of connected nodes (default is false)
-6. pingTimeout: the time to wait for a ping response from a node (default is 5)
-7. nodeSamplerInterval: how often to sample / ping the nodes listed and connected (default is 5)
-8. transportSniff: enable sniffing (default is false)
-9. bulkConcurrentRequests: set the number of concurrent requests (default is 10)
-10. bulkActions: we want to execute the bulk every n requests (default is 10000)
-11. bulkSize: we want to flush the bulk every n mb (default is 10)
-12. bulkFlushInterval: We want to flush the bulk every n seconds whatever the number of requests (default is 10)
+- clusterName: ES cluster name
+- user: ElasticSearch user for authentication (leave blank if not required) 
+- password: ElasticSearch password for authentication
+- autoRefresh: Refresh store on commit. Require indices:admin/refresh rights
+- filterByStorageId: Multiple storage instance can use the same index. If the filtering is disabled this driver will see all sensors (should be used only for read-only SOS service)
+- certificatesPath: List of additional SSL certificates for ElasticSearch connection
+- nodeUrls: list of nodes under the format <host>:<port>
+- indexNamePrepend: String to add in index name before the data name
+- indexNameMetaData: Index name of the OpenSensorHub metadata
+- scrollMaxDuration: When scrolling, the maximum duration ScrollableResults will be usable if no other results are fetched from, in ms
+- scrollFetchSize: When scrolling, the number of results fetched by each Elasticsearch call
+- connectTimeout: Determines the timeout in milliseconds until a connection is established. A timeout value of zero is interpreted as an infinite timeout.
+- socketTimeout: Defines the socket timeout (SO_TIMEOUT) in milliseconds, which is the timeout for waiting for data or, put differently, a maximum period inactivity between two consecutive data packets). 
+- maxRetryTimeout: Sets the maximum timeout (in milliseconds) to honour in case of multiple retries of the same request. 
+- bulkConcurrentRequests: Set the number of concurrent requests
+- bulkActions: execute the bulk every n requests
+- bulkSize: flush the bulk every n mb
+- bulkFlushInterval: flush the bulk every n seconds whatever the number of requests
+- maxBulkRetry: Bulk insertion may fail, client will resend in case of TimeOut exception. Retry is disabled by default in order to avoid overflow of ElasticSearch cluster 
 
-A unique identifier is used as an index for the storage. Inside this index, we have three "types" of data:
-1. desc: where we store the AbstractProcess object
-2. info: where we store the stream information such as the name, the record description and the recommended encoding
-3. data: where we store the raw data
-
-Elasticsearch allows to use custom mapping to store the different kind of data. We use the Kryo de/serializer to de/serialize the objets before sending them to the server.
-The mapping used in that case is a "binary" datatype.
+A special parser into this driver will create appropriate default Elastic Search index mapping for each OSH DataComponent.
+You can override this mapping using Elastic Search tools. (ex. Kibana)
 
 ## Mappings
 
 There are the different mappings depending on the storage used:
-1. basic storage mapping
+
+1. Open Sensor Hub specific metadata
 ```json
-"mappings": {
-      "info": {
-        "properties": {
-          "blob": {
-            "type": "binary"
-          }
-        }
-      },
-      "data": {
-        "properties": {
-          "blob": {
-            "type": "binary"
-          },
-          "producerID": {
-            "type": "keyword"
-          },
-          "recordType": {
-            "type": "keyword"
-          },
-          "timestamp": {
-            "type": "double"
-          }
+{
+  "mapping": {
+    "osh_metadata": {
+      "properties": {
+        "blob": {
+          "type": "binary"
+        },
+        "index": {
+          "type": "keyword"
+        },
+        "metadataType": {
+          "type": "keyword"
+        },
+        "storageID": {
+          "type": "keyword"
+        },
+        "timestamp": {
+          "type": "date",
+          "format": "epoch_millis"
         }
       }
     }
   }
 ```
-2. obs storage mapping
+
+2. Sensor Location
 ```json
-"mappings": {
-      "info": {
-        "properties": {
-          "blob": {
-            "type": "binary"
-          }
-        }
-      },
-      "data": {
-        "_parent": {
-          "type": "foi"
+{
+  "mapping": {
+    "sensorLocation": {
+      "dynamic": "false",
+      "properties": {
+        "location": {
+          "type": "geo_point"
         },
-        "_routing": {
-          "required": true
+        "location_height": {
+          "type": "double"
         },
-        "properties": {
-          "blob": {
-            "type": "binary"
-          },
-          "foiID": {
-            "type": "keyword"
-          },
-          "geom": {
-            "type": "geo_shape"
-          },
-          "producerID": {
-            "type": "keyword"
-          },
-          "recordType": {
-            "type": "keyword"
-          },
-          "timestamp": {
-            "type": "double"
-          }
-        }
-      },
-      "foi": {
-        "properties": {
-          "blob": {
-            "type": "binary"
-          },
-          "foiID": {
-            "type": "keyword"
-          },
-          "geom": {
-            "type": "geo_shape"
-          },
-          "producerID": {
-            "type": "keyword"
-          }
-        }
-      },
-      "geobounds": {
-        "properties": {
-          "blob": {
-            "type": "binary"
-          }
+        "producerID": {
+          "type": "keyword"
+        },
+        "storageID": {
+          "type": "keyword"
+        },
+        "timestamp": {
+          "type": "date",
+          "format": "epoch_millis"
         }
       }
     }
   }
+}
 ```
-A geo_shape datatype is used to store geometry. For now, only PolygonJTS, PointJTS and EnvelopeJTS are supported. To compute the extent, an extra envelope geometry (geobounds) is stored and 
-is updated whenever a new record is stored. The envelope is recomputed and can be retrieved only once.
-
-## Obs storage
-To make a link between data and foi, the obs storage data datatype is a parent of the basic storage datatype. Thus the parent_id query can be used to find child documents which belong to the data type. 
-This link allows one to make request on multiple, parent and child, types using the *QueryBuilders.hasParentQuery*.
-
-## Mapping relationship
-
-![alt text][mappingrelation]
-
-
-## Sequence
-
-### Time filtering
-
-![alt text][sequencetime]
-
-### Foi filtering
-
-![alt text][sequencefoi]
-
-[classdiagram]: https://github.com/opensensorhub/osh-persistence/raw/elastic-search/sensorhub-storage-es/doc/resources/ES-class.png "Main class diagram"
-[mappingrelation]: https://github.com/opensensorhub/osh-persistence/raw/elastic-search/sensorhub-storage-es/doc/resources/mapping-relation.png "Mapping relationship"
-[sequencetime]: https://github.com/opensensorhub/osh-persistence/raw/elastic-search/sensorhub-storage-es/doc/resources/ES-sequence-time-filter.png "Sequence time filtering diagram"
-[sequencefoi]: https://github.com/opensensorhub/osh-persistence/raw/elastic-search/sensorhub-storage-es/doc/resources/ES-sequence-foi-filter.png "Sequence FOI filtering diagram"

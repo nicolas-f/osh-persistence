@@ -11,6 +11,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Methods to build Json elements from OSH components
+ * @author Nicolas Fortin, UMRAE Ifsttar
+ */
 public class ESDataStoreTemplate {
 
     private static final long MIN_DATE_EPOCH = -62138538000000L;

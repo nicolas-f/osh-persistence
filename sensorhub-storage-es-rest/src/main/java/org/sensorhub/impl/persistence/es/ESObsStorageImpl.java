@@ -62,6 +62,7 @@ import java.util.Map;
  * </p>
  *
  * @author Mathieu Dhainaut <mathieu.dhainaut@gmail.com>
+ * @author Nicolas Fortin, UMRAE Ifsttar
  * @since 2017
  */
 public class ESObsStorageImpl extends ESBasicStorageImpl implements IObsStorageModule<ESBasicStorageConfig> {
