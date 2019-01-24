@@ -948,7 +948,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     case FLOAT:
                     case DOUBLE:
                         for(int ind = 0; ind < compSize; ind++) {
-                            dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number)dataList.get(ind)).doubleValue());
+                            Object value = dataList.get(ind);
+                            if(value instanceof Number) {
+                                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), ((Number) value).doubleValue());
+                            } else {
+                                dataBlock.setDoubleValue(fieldIndex.getAndIncrement(), Double.NaN);
+                            }
                         }
                         break;
                     case SHORT:
@@ -1368,6 +1373,23 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 getLogger().error("Unsupported type " + data.getDataType(i).name());
         }
     }
+
+    private static void setXContentValue(XContentBuilder builder, double value) throws IOException {
+        if(Double.isNaN(value) || !Double.isFinite(value)) {
+            builder.nullValue();
+        } else {
+            builder.value(value);
+        }
+    }
+
+    private static void setXContentValue(XContentBuilder builder, float value) throws IOException {
+        if(Float.isNaN(value) || !Float.isFinite(value)) {
+            builder.nullValue();
+        } else {
+            builder.value(value);
+        }
+    }
+
     void dataComponentToJson(DataComponent dataComponent, DataBlock data, XContentBuilder builder, AtomicInteger fieldCounter,ScalarIndexer ignoreField) throws IOException {
         if(dataComponent instanceof SimpleComponent) {
             if(ignoreField == null || fieldCounter.get() != ignoreField.getDataIndex(data)) {
@@ -1378,8 +1400,10 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         } else if(dataComponent instanceof Vector) {
             builder.startObject(dataComponent.getName());
             {
-                builder.field("lat", data.getDoubleValue(fieldCounter.getAndIncrement()));
-                builder.field("lon", data.getDoubleValue(fieldCounter.getAndIncrement()));
+                builder.field("lat");
+                setXContentValue(builder, data.getDoubleValue(fieldCounter.getAndIncrement()));
+                builder.field("lon");
+                setXContentValue(builder, data.getDoubleValue(fieldCounter.getAndIncrement()));
             }
             builder.endObject();
             builder.field(dataComponent.getName()+Z_FIELD, data.getDoubleValue(fieldCounter.getAndIncrement()));
@@ -1392,12 +1416,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 switch (scalarComponent.getDataType()) {
                     case FLOAT:
                         for(int ind = 0; ind < compSize; ind++) {
-                            builder.value(data.getFloatValue(fieldCounter.getAndIncrement()));
+                            setXContentValue(builder, data.getFloatValue(fieldCounter.getAndIncrement()));
                         }
                         break;
                     case DOUBLE:
                         for(int ind = 0; ind < compSize; ind++) {
-                            builder.value(data.getDoubleValue(fieldCounter.getAndIncrement()));
+                            setXContentValue(builder, data.getDoubleValue(fieldCounter.getAndIncrement()));
                         }
                         break;
                     case SHORT:

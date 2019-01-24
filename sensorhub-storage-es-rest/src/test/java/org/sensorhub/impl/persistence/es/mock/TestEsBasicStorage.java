@@ -14,8 +14,6 @@
 
 package org.sensorhub.impl.persistence.es.mock;
 
-import net.opengis.gml.v32.Point;
-import net.opengis.gml.v32.impl.PointImpl;
 import net.opengis.swe.v20.Count;
 import net.opengis.swe.v20.DataArray;
 import net.opengis.swe.v20.DataBlock;
@@ -34,12 +32,8 @@ import org.sensorhub.api.common.SensorHubException;
 import org.sensorhub.api.persistence.DataFilter;
 import org.sensorhub.api.persistence.DataKey;
 import org.sensorhub.api.persistence.IDataRecord;
-import org.sensorhub.impl.SensorHub;
 import org.sensorhub.impl.persistence.es.ESBasicStorageConfig;
 import org.sensorhub.impl.persistence.es.ESBasicStorageImpl;
-import org.sensorhub.impl.sensor.AbstractSensorModule;
-import org.sensorhub.impl.sensor.DefaultLocationOutputLLA;
-import org.sensorhub.impl.sensor.SensorSystem;
 import org.sensorhub.test.TestUtils;
 import org.sensorhub.test.persistence.AbstractTestBasicStorage;
 import org.vast.data.TextEncodingImpl;
@@ -48,8 +42,10 @@ import org.vast.swe.SWEHelper;
 import org.vast.swe.helper.GeoPosHelper;
 
 import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 
@@ -268,4 +264,63 @@ public class TestEsBasicStorage extends AbstractTestBasicStorage<ESBasicStorageI
 
     }
 
+
+    @Test
+    public void testNaNSimpleArrayDataBlock() throws Exception {
+        SWEHelper fac = new SWEHelper();
+        DataComponent acousticData  = fac.newDataRecord();
+        acousticData.setName("acoustic_fast");
+        acousticData.setDefinition("http://sensorml.com/ont/swe/property/Acoustic");
+        acousticData.setDescription("Acoustic indicators measurements");
+
+        Count elementCount = fac.newCount();
+        elementCount.setValue(8); // 8x125ms
+
+        // add time, temperature, pressure, wind speed and wind direction fields
+        acousticData.addComponent("time", fac.newTimeStampIsoUTC());
+        acousticData.addComponent("leq", fac.newArray(elementCount, "leq", fac.newQuantity(SWEHelper.getPropertyUri("dBsplFast"), "Leq", null, "dB", DataType.FLOAT)));
+        acousticData.addComponent("laeq", fac.newArray(elementCount, "laeq", fac.newQuantity(SWEHelper.getPropertyUri("dBsplFast"), "LAeq", null, "dB(A)", DataType.FLOAT)));
+        for(double freq : freqs) {
+            String name = "leq_" + Double.valueOf(freq).intValue();
+            acousticData.addComponent(name, fac.newArray(elementCount, name, fac.newQuantity(SWEHelper.getPropertyUri("dBsplFast"), name, null, "dB", DataType.FLOAT)));
+        }
+
+        // also generate encoding definition
+        DataEncoding acousticEncoding = fac.newTextEncoding(",", "\n");
+
+
+        storage.addRecordStore(acousticData.getName(), acousticData, acousticEncoding);
+
+        forceReadBackFromStorage();
+
+        DataBlock dataBlock = acousticData.createDataBlock();
+        int index = 0;
+        dataBlock.setDoubleValue(index++, 1531297249.125);
+        for(int idStep = 0; idStep < 8; idStep++) {
+            dataBlock.setDoubleValue(index++, idStep + 0.1);
+        }
+        for(int idStep = 0; idStep < 8; idStep++) {
+            dataBlock.setDoubleValue(index++, idStep + 0.2);
+        }
+        for (float freq : freqs) {
+            for(int idStep = 0; idStep < 8; idStep++) {
+                if(idStep != 2) {
+                    dataBlock.setDoubleValue(index++, idStep + freq / 100000.);
+                } else {
+                    dataBlock.setDoubleValue(index++, Double.NaN);
+                }
+            }
+        }
+        DataKey dataKey = new DataKey(acousticData.getName(),
+                "e44cb499-3b6c-4305-b479-ebacc965579f", dataBlock.getDoubleValue(0));
+
+        storage.storeRecord(dataKey, dataBlock);
+
+        forceReadBackFromStorage();
+
+        DataBlock dataBlock1 = storage.getDataBlock(dataKey);
+
+        TestUtils.assertEquals(dataBlock, dataBlock1);
+
+    }
 }
