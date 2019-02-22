@@ -21,6 +21,7 @@ import net.opengis.sensorml.v20.AbstractProcess;
 import net.opengis.swe.v20.*;
 import net.opengis.swe.v20.Vector;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
@@ -46,6 +47,8 @@ import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
+import org.elasticsearch.client.CompressedClient;
+import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
@@ -115,6 +118,8 @@ import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static java.util.Collections.emptySet;
 
 /**
  * <p>
@@ -323,11 +328,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         restClientBuilder.setMaxRetryTimeoutMillis(config.maxRetryTimeout);
 
-        client = new RestHighLevelClient(restClientBuilder);
+        client = new CompressedClient(restClientBuilder);
 
 		bulkListener = new BulkListener(client, config.maxBulkRetry, 50);
 
-        bulkProcessor = BulkProcessor.builder(client::bulkAsync, bulkListener).setBulkActions(config.bulkActions)
+        bulkProcessor = BulkProcessor.builder(client instanceof CompressedClient ? ((CompressedClient)client)::bulkCompressedAsync : client::bulkAsync, bulkListener).setBulkActions(config.bulkActions)
                 .setBulkSize(new ByteSizeValue(config.bulkSize, ByteSizeUnit.MB))
                 .setFlushInterval(TimeValue.timeValueSeconds(config.bulkFlushInterval))
                 .setConcurrentRequests(config.bulkConcurrentRequests)
