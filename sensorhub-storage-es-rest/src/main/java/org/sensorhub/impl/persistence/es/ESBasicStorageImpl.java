@@ -343,7 +343,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         client = new CompressedClient(restClientBuilder);
 
-		bulkListener = new BulkListener(client, config.maxBulkRetry, 50);
+		bulkListener = new BulkListener(client, config.maxBulkRetry, config.scrollMaxDuration);
 
         bulkProcessor = BulkProcessor.builder(client instanceof CompressedClient ? ((CompressedClient)client)::bulkCompressedAsync : client::bulkAsync, bulkListener).setBulkActions(config.bulkActions)
                 .setBulkSize(new ByteSizeValue(config.bulkSize, ByteSizeUnit.MB))
@@ -1736,21 +1736,14 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	    RestHighLevelClient client;
 	    private int maxRetry;
 	    private int retryDelay;
-        MessageDigest messageDigest;
 
         public BulkListener(RestHighLevelClient client, int max_retry, int retryDelay) {
             this.client = client;
             this.maxRetry = max_retry;
             this.retryDelay = retryDelay;
-
-            try {
-                messageDigest = MessageDigest.getInstance("SHA-256");
-            } catch (NoSuchAlgorithmException ignored) {
-
-            }
         }
 
-        private Map<String, Integer> bulkRetries = new HashMap<>();
+        private Map<Long, Integer> bulkRetries = new HashMap<>();
 
 
         @Override
@@ -1767,32 +1760,24 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         @Override
         public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-            if(failure instanceof IOException && request != null) {
+            if((failure instanceof IOException || failure instanceof IllegalStateException) && request != null) {
                 // Retry to send the bulk later
-                messageDigest.reset();
-                messageDigest.update(request.getDescription().getBytes());
-                String hash = new String(messageDigest.digest());
-                Integer retries = bulkRetries.get(hash);
-                if(retries == null || retries < maxRetry) {
-                    log.info("Retry send bulk request", failure);
-                    bulkRetries.put(hash, (retries == null ? 0 : retries) + 1);
-                    try {
-                        Thread.sleep(WAIT_TIME_AFTER_COMMIT);
-                    } catch (InterruptedException ex) {
-                        logger.error("InterruptedException exception while pushing data to ElasticSearch, data lost", failure);
-                    }
+                int retries = bulkRetries.getOrDefault(executionId, 0);
+                if(retries < maxRetry) {
+                    log.info(String.format("Retry send bulk request id:%d",executionId));
+                    bulkRetries.put(executionId, retries + 1);
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
                             client.bulkAsync(request, new ActionListener<BulkResponse>() {
                                 @Override
                                 public void onResponse(BulkResponse bulkItemResponses) {
-
+                                    log.info(String.format("Successfully sent bulk request id:%d after a failure",executionId));
                                 }
 
                                 @Override
                                 public void onFailure(Exception e) {
-                                    afterBulk(-1, request, e);
+                                    afterBulk(executionId, request, e);
                                 }
                             });
 
@@ -1800,10 +1785,12 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                     }, retryDelay);
                     return;
                 } else {
-                    logger.error(String.format("Exception while pushing data to ElasticSearch after %d retries, data lost", retries), failure);
+                    logger.error(String.format("Exception while pushing data id:%d to ElasticSearch after %d retries, data lost",executionId, retries), failure);
                 }
             }
-            logger.error("Unprocessed exception while pushing data to ElasticSearch, data lost", failure);
+            if(request != null) {
+                logger.error(String.format("Unprocessed exception while pushing data id:%d to ElasticSearch, data lost",executionId), failure);
+            }
         }
     }
 }
