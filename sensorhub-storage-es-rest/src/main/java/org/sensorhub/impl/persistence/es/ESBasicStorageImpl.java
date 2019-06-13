@@ -250,20 +250,33 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
         HttpHost[] hosts = new HttpHost[config.nodeUrls.size()];
         int i=0;
         for(String nodeUrl : config.nodeUrls){
-            try {
-                URL url = null;
-                // <host>:<port>
-                if(nodeUrl.startsWith("http")){
-                    url = new URL(nodeUrl);
-                } else {
-                    url = new URL("http://"+nodeUrl);
+            long tryStart = System.currentTimeMillis();
+            int retry = 0;
+            while(true) {
+                try {
+                    URL url = null;
+                    // <host>:<port>
+                    if (nodeUrl.startsWith("http")) {
+                        url = new URL(nodeUrl);
+                    } else {
+                        url = new URL("http://" + nodeUrl);
+                    }
+
+                    hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
+                    break;
+                } catch (MalformedURLException | UnknownHostException e) {
+                    log.error("Cannot initialize transport address:" + e.getMessage());
+                    retry++;
+                    if (retry < config.maxBulkRetry) {
+                        try {
+                            Thread.sleep(Math.max(1000, config.connectTimeout - (System.currentTimeMillis() - tryStart)));
+                        } catch (InterruptedException ex) {
+                            throw new SensorHubException("Cannot initialize transport address", e);
+                        }
+                    } else {
+                        throw new SensorHubException(String.format("Cannot initialize transport address after %d retries", retry), e);
+                    }
                 }
-
-                hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
-
-            } catch (MalformedURLException | UnknownHostException e) {
-                log.error("Cannot initialize transport address:"+e.getMessage());
-                throw new SensorHubException("Cannot initialize transport address",e);
             }
         }
 
@@ -1754,7 +1767,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         @Override
         public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-            if(failure instanceof SocketTimeoutException && request != null) {
+            if(failure instanceof IOException && request != null) {
                 // Retry to send the bulk later
                 messageDigest.reset();
                 messageDigest.update(request.getDescription().getBytes());
@@ -1763,6 +1776,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                 if(retries == null || retries < maxRetry) {
                     log.info("Retry send bulk request", failure);
                     bulkRetries.put(hash, (retries == null ? 0 : retries) + 1);
+                    try {
+                        Thread.sleep(WAIT_TIME_AFTER_COMMIT);
+                    } catch (InterruptedException ex) {
+                        logger.error("InterruptedException exception while pushing data to ElasticSearch, data lost", failure);
+                    }
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
@@ -1781,9 +1799,11 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
                         }
                     }, retryDelay);
                     return;
+                } else {
+                    logger.error(String.format("Exception while pushing data to ElasticSearch after %d retries, data lost", retries), failure);
                 }
             }
-            logger.error("Exception while pushing data to ElasticSearch", failure);
+            logger.error("Unprocessed exception while pushing data to ElasticSearch, data lost", failure);
         }
     }
 }
