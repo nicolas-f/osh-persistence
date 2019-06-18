@@ -74,7 +74,9 @@ import org.sensorhub.api.persistence.IObsStorage;
 import org.sensorhub.api.persistence.IRecordStorageModule;
 import org.sensorhub.api.persistence.IStorageModule;
 import org.sensorhub.api.persistence.StorageException;
+import org.sensorhub.impl.SensorHub;
 import org.sensorhub.impl.module.AbstractModule;
+import org.sensorhub.impl.module.ModuleRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.vast.swe.SWEConstants;
@@ -135,6 +137,8 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 	private static final int TIME_RANGE_CLUSTER_SCROLL_FETCH_SIZE = 5000;
 
 	protected static final double MAX_TIME_CLUSTER_DELTA = 60.0;
+
+	private static final int DELAY_RETRY_START = 10000;
 
 	// ms .Fetch again record store map if it is done at least this time
 	private static final int RECORD_STORE_CACHE_LIFETIME = 5000;
@@ -248,34 +252,45 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         // init transport client
         HttpHost[] hosts = new HttpHost[config.nodeUrls.size()];
-        int i=0;
-        for(String nodeUrl : config.nodeUrls){
-            long tryStart = System.currentTimeMillis();
-            int retry = 0;
-            while(true) {
-                try {
-                    URL url = null;
-                    // <host>:<port>
-                    if (nodeUrl.startsWith("http")) {
-                        url = new URL(nodeUrl);
-                    } else {
-                        url = new URL("http://" + nodeUrl);
-                    }
-
-                    hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
-                    break;
-                } catch (MalformedURLException | UnknownHostException e) {
-                    log.error("Cannot initialize transport address:" + e.getMessage());
-                    retry++;
-                    if (retry < config.maxBulkRetry) {
-                        try {
-                            Thread.sleep(Math.max(1000, config.connectTimeout - (System.currentTimeMillis() - tryStart)));
-                        } catch (InterruptedException ex) {
-                            throw new SensorHubException("Cannot initialize transport address", e);
+        boolean foundOneHost = false;
+        while(!foundOneHost) {
+            int i=0;
+            for (String nodeUrl : config.nodeUrls) {
+                long tryStart = System.currentTimeMillis();
+                int retry = 0;
+                while (true) {
+                    try {
+                        URL url = null;
+                        // <host>:<port>
+                        if (nodeUrl.startsWith("http")) {
+                            url = new URL(nodeUrl);
+                        } else {
+                            url = new URL("http://" + nodeUrl);
                         }
-                    } else {
-                        throw new SensorHubException(String.format("Cannot initialize transport address after %d retries", retry), e);
+
+                        hosts[i++] = new HttpHost(InetAddress.getByName(url.getHost()), url.getPort(), url.getProtocol());
+                        foundOneHost = true;
+                        break;
+                    } catch (MalformedURLException | UnknownHostException e) {
+                        retry++;
+                        if (retry < config.maxBulkRetry) {
+                            try {
+                                Thread.sleep(Math.max(1000, config.connectTimeout - (System.currentTimeMillis() - tryStart)));
+                            } catch (InterruptedException ex) {
+                                throw new SensorHubException("Cannot initialize transport address", e);
+                            }
+                        } else {
+                            getLogger().error(String.format("Cannot initialize transport address after %d retries", retry), e);
+                            break;
+                        }
                     }
+                }
+            }
+            if(!foundOneHost) {
+                try {
+                    Thread.sleep(DELAY_RETRY_START);
+                } catch (InterruptedException ex) {
+                    throw new SensorHubException("Cannot initialize transport address", ex);
                 }
             }
         }
@@ -1760,7 +1775,7 @@ public class ESBasicStorageImpl extends AbstractModule<ESBasicStorageConfig> imp
 
         @Override
         public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-            if((failure instanceof IOException || failure instanceof IllegalStateException) && request != null) {
+            if((failure instanceof IOException || failure instanceof ElasticsearchStatusException) && request != null) {
                 // Retry to send the bulk later
                 int retries = bulkRetries.getOrDefault(executionId, 0);
                 if(retries < maxRetry) {
